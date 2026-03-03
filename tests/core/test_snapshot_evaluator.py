@@ -1,4 +1,5 @@
 from __future__ import annotations
+import threading
 import typing as t
 
 from typing_extensions import Self
@@ -18,7 +19,11 @@ from sqlglot import parse, parse_one, select
 from sqlmesh.core.audit import ModelAudit, StandaloneAudit
 from sqlmesh.core import dialect as d
 from sqlmesh.core.dialect import schema_, to_schema
-from sqlmesh.core.engine_adapter import EngineAdapter, create_engine_adapter, BigQueryEngineAdapter
+from sqlmesh.core.engine_adapter import (
+    EngineAdapter,
+    create_engine_adapter,
+    BigQueryEngineAdapter,
+)
 from sqlmesh.core.engine_adapter.base import MERGE_SOURCE_ALIAS, MERGE_TARGET_ALIAS
 from sqlmesh.core.engine_adapter.shared import (
     DataObject,
@@ -277,7 +282,11 @@ def test_runtime_stages(capsys, mocker, adapter_mock, make_snapshot):
     assert f"RuntimeStage value: {RuntimeStage.CREATING.value}" in capsys.readouterr().out
 
     evaluator.evaluate(
-        snapshot, start="2020-01-01", end="2020-01-02", execution_time="2020-01-02", snapshots={}
+        snapshot,
+        start="2020-01-01",
+        end="2020-01-02",
+        execution_time="2020-01-02",
+        snapshots={},
     )
     assert f"RuntimeStage value: {RuntimeStage.EVALUATING.value}" in capsys.readouterr().out
 
@@ -477,7 +486,10 @@ def test_cleanup(mocker: MockerFixture, adapter_mock, make_snapshot):
                 f"sqlmesh__test_schema.test_schema__test_model__{snapshot.fingerprint.to_version()}__dev",
                 cascade=True,
             ),
-            call(f"sqlmesh__test_schema.test_schema__test_model__{snapshot.version}", cascade=True),
+            call(
+                f"sqlmesh__test_schema.test_schema__test_model__{snapshot.version}",
+                cascade=True,
+            ),
         ]
     )
     adapter_mock.reset_mock()
@@ -840,7 +852,10 @@ def test_evaluate_incremental_unmanaged_no_intervals(
     snapshot = make_snapshot(model)
     snapshot.categorize_as(SnapshotChangeCategory.BREAKING)
 
-    table_columns = {"one": exp.DataType.build("int"), "ds": exp.DataType.build("timestamp")}
+    table_columns = {
+        "one": exp.DataType.build("int"),
+        "ds": exp.DataType.build("timestamp"),
+    }
     adapter_mock.columns.return_value = table_columns
 
     evaluator = SnapshotEvaluator(adapter_mock)
@@ -1048,7 +1063,11 @@ def test_create_new_forward_only_model(mocker: MockerFixture, adapter_mock, make
     "deployability_index,  snapshot_category, forward_only",
     [
         (DeployabilityIndex.all_deployable(), SnapshotChangeCategory.BREAKING, False),
-        (DeployabilityIndex.all_deployable(), SnapshotChangeCategory.NON_BREAKING, False),
+        (
+            DeployabilityIndex.all_deployable(),
+            SnapshotChangeCategory.NON_BREAKING,
+            False,
+        ),
         (DeployabilityIndex.all_deployable(), SnapshotChangeCategory.BREAKING, True),
         (
             DeployabilityIndex.all_deployable(),
@@ -1250,7 +1269,10 @@ def test_create_materialized_view(mocker: MockerFixture, adapter_mock, make_snap
     )
 
     adapter_mock.create_view.assert_called_once_with(
-        snapshot.table_name(), model.render_query(), column_descriptions={}, **common_kwargs
+        snapshot.table_name(),
+        model.render_query(),
+        column_descriptions={},
+        **common_kwargs,
     )
 
 
@@ -1298,7 +1320,10 @@ def test_create_view_with_properties(mocker: MockerFixture, adapter_mock, make_s
     )
 
     adapter_mock.create_view.assert_called_once_with(
-        snapshot.table_name(), model.render_query(), column_descriptions={}, **common_kwargs
+        snapshot.table_name(),
+        model.render_query(),
+        column_descriptions={},
+        **common_kwargs,
     )
 
 
@@ -1815,7 +1840,10 @@ def test_create_clone_in_dev(mocker: MockerFixture, adapter_mock, make_snapshot)
 
     adapter_mock.create_table.assert_called_once_with(
         f"sqlmesh__test_schema.test_schema__test_model__{snapshot.version}__dev_schema_tmp",
-        target_columns_to_types={"a": exp.DataType.build("int"), "ds": exp.DataType.build("date")},
+        target_columns_to_types={
+            "a": exp.DataType.build("int"),
+            "ds": exp.DataType.build("date"),
+        },
         table_format=None,
         storage_format=None,
         partitioned_by=[exp.to_column("ds", quoted=True)],
@@ -1932,7 +1960,10 @@ def test_create_clone_in_dev_self_referencing(
 
     adapter_mock.create_table.assert_called_once_with(
         f"sqlmesh__test_schema.test_schema__test_model__{snapshot.version}__dev_schema_tmp",
-        target_columns_to_types={"a": exp.DataType.build("int"), "ds": exp.DataType.build("date")},
+        target_columns_to_types={
+            "a": exp.DataType.build("int"),
+            "ds": exp.DataType.build("date"),
+        },
         table_format=None,
         storage_format=None,
         partitioned_by=[exp.to_column("ds", quoted=True)],
@@ -2209,7 +2240,10 @@ def test_forward_only_snapshot_for_added_model(mocker: MockerFixture, adapter_mo
     evaluator.create([snapshot], {}, deployability_index=DeployabilityIndex.none_deployable())
 
     common_create_args = dict(
-        target_columns_to_types={"a": exp.DataType.build("int"), "ds": exp.DataType.build("date")},
+        target_columns_to_types={
+            "a": exp.DataType.build("int"),
+            "ds": exp.DataType.build("date"),
+        },
         table_format=None,
         storage_format=None,
         partitioned_by=[exp.to_column("ds", quoted=True)],
@@ -2670,7 +2704,11 @@ def test_create_incremental_by_unique_key_updated_at_exp(adapter_mock, make_snap
                                 exp.Coalesce(
                                     this=exp.column("updated_at", MERGE_SOURCE_ALIAS, quoted=True),
                                     expressions=[
-                                        exp.column("updated_at", MERGE_TARGET_ALIAS, quoted=True)
+                                        exp.column(
+                                            "updated_at",
+                                            MERGE_TARGET_ALIAS,
+                                            quoted=True,
+                                        )
                                     ],
                                 )
                             ),
@@ -2741,7 +2779,11 @@ def test_create_incremental_by_unique_key_multiple_updated_at_exp(adapter_mock, 
                                 exp.Coalesce(
                                     this=exp.column("updated_at", MERGE_SOURCE_ALIAS, quoted=True),
                                     expressions=[
-                                        exp.column("updated_at", MERGE_TARGET_ALIAS, quoted=True)
+                                        exp.column(
+                                            "updated_at",
+                                            MERGE_TARGET_ALIAS,
+                                            quoted=True,
+                                        )
                                     ],
                                 )
                             ),
@@ -2760,7 +2802,11 @@ def test_create_incremental_by_unique_key_multiple_updated_at_exp(adapter_mock, 
                                 exp.Coalesce(
                                     this=exp.column("updated_at", MERGE_SOURCE_ALIAS, quoted=True),
                                     expressions=[
-                                        exp.column("updated_at", MERGE_TARGET_ALIAS, quoted=True)
+                                        exp.column(
+                                            "updated_at",
+                                            MERGE_TARGET_ALIAS,
+                                            quoted=True,
+                                        )
                                     ],
                                 )
                             ),
@@ -2894,7 +2940,11 @@ def test_create_incremental_by_unique_key_merge_filter(adapter_mock, make_snapsh
                                 exp.Coalesce(
                                     this=exp.column("updated_at", MERGE_SOURCE_ALIAS, quoted=True),
                                     expressions=[
-                                        exp.column("updated_at", MERGE_TARGET_ALIAS, quoted=True)
+                                        exp.column(
+                                            "updated_at",
+                                            MERGE_TARGET_ALIAS,
+                                            quoted=True,
+                                        )
                                     ],
                                 )
                             ),
@@ -4239,7 +4289,11 @@ def test_migrate_managed(adapter_mock, make_snapshot, mocker: MockerFixture):
 
 
 def test_multiple_engine_creation(snapshot: Snapshot, adapters, make_snapshot):
-    engine_adapters = {"default": adapters[0], "secondary": adapters[1], "third": adapters[2]}
+    engine_adapters = {
+        "default": adapters[0],
+        "secondary": adapters[1],
+        "third": adapters[2],
+    }
     evaluator = SnapshotEvaluator(engine_adapters)
 
     assert len(evaluator.adapters) == 3
@@ -4499,7 +4553,8 @@ def test_multiple_engine_cleanup(snapshot: Snapshot, adapters, make_snapshot):
         f"sqlmesh__db.db__model__{snapshot.version}__dev", cascade=True
     )
     engine_adapters["secondary"].drop_table.assert_called_once_with(
-        f"sqlmesh__test_schema.test_schema__test_model__{snapshot_2.version}__dev", cascade=True
+        f"sqlmesh__test_schema.test_schema__test_model__{snapshot_2.version}__dev",
+        cascade=True,
     )
 
 
@@ -4595,7 +4650,11 @@ def test_multi_engine_python_model_with_macros(adapters, make_snapshot):
 
 
 def test_multiple_engine_virtual_layer(snapshot: Snapshot, adapters, make_snapshot):
-    engine_adapters = {"default": adapters[0], "secondary": adapters[1], "third": adapters[2]}
+    engine_adapters = {
+        "default": adapters[0],
+        "secondary": adapters[1],
+        "third": adapters[2],
+    }
     evaluator = SnapshotEvaluator(engine_adapters)
 
     model = load_sql_based_model(
@@ -4793,7 +4852,11 @@ def test_wap_non_materialized_snapshot(
     adapter_mock.wap_supported.return_value = True
 
     wap_id = evaluator.evaluate(
-        snapshot, start="2020-01-01", end="2020-01-01", execution_time="2020-01-01", snapshots={}
+        snapshot,
+        start="2020-01-01",
+        end="2020-01-01",
+        execution_time="2020-01-01",
+        snapshots={},
     )
 
     assert wap_id is None
@@ -5209,7 +5272,10 @@ def test_grants_update(
     evaluator.create([new_snapshot], {})
 
     sync_grants_mock.assert_called_once()
-    assert sync_grants_mock.call_args[0][1] == {"select": ["user2", "user3"], "insert": ["admin"]}
+    assert sync_grants_mock.call_args[0][1] == {
+        "select": ["user2", "user3"],
+        "insert": ["admin"],
+    }
 
     # Update model query AND remove grants
     updated_model_dict = model.dict()
@@ -5264,7 +5330,11 @@ def test_grants_create_and_evaluate(
 
     sync_grants_mock.reset_mock()
     evaluator.evaluate(
-        snapshot, start="2020-01-01", end="2020-01-02", execution_time="2020-01-02", snapshots={}
+        snapshot,
+        start="2020-01-01",
+        end="2020-01-02",
+        execution_time="2020-01-02",
+        snapshots={},
     )
     # Evaluate should not reapply grants
     sync_grants_mock.assert_not_called()
@@ -5489,7 +5559,10 @@ def test_grants_in_production_with_dev_only_vde(
     evaluator.create([snapshot], {}, deployability_index=deployability_index)
 
     sync_grants_mock.assert_called_once()
-    assert sync_grants_mock.call_args[0][1] == {"select": ["user1"], "insert": ["role1"]}
+    assert sync_grants_mock.call_args[0][1] == {
+        "select": ["user1"],
+        "insert": ["role1"],
+    }
 
     # Non-deployable (dev) env
     sync_grants_mock.reset_mock()
@@ -5500,4 +5573,173 @@ def test_grants_in_production_with_dev_only_vde(
     else:
         # Should still apply grants to physical table when target layer is ALL or PHYSICAL
         sync_grants_mock.assert_called_once()
-        assert sync_grants_mock.call_args[0][1] == {"select": ["user1"], "insert": ["role1"]}
+        assert sync_grants_mock.call_args[0][1] == {
+            "select": ["user1"],
+            "insert": ["role1"],
+        }
+
+
+@pytest.mark.fast
+def test_audit_concurrent(mocker: MockerFixture, adapter_mock, make_snapshot):
+    """Test that audits are executed concurrently when audit_concurrent_tasks > 1."""
+    thread_ids: t.List[int] = []
+    call_lock = threading.Lock()
+
+    def record_thread_fetchone(*args, **kwargs):
+        with call_lock:
+            thread_ids.append(threading.get_ident())
+        return (0,)
+
+    adapter_mock.fetchone.side_effect = record_thread_fetchone
+
+    audit1 = ModelAudit(name="audit1", query="SELECT * FROM test_schema.test_table WHERE 1 = 0")
+    audit2 = ModelAudit(name="audit2", query="SELECT * FROM test_schema.test_table WHERE 1 = 0")
+    audit3 = ModelAudit(name="audit3", query="SELECT * FROM test_schema.test_table WHERE 1 = 0")
+
+    model = SqlModel(
+        name="test_schema.test_table",
+        kind=FullKind(),
+        query=parse_one("SELECT a::int FROM tbl"),
+        audits=[("audit1", {}), ("audit2", {}), ("audit3", {})],
+        audit_definitions={
+            "audit1": audit1,
+            "audit2": audit2,
+            "audit3": audit3,
+        },
+    )
+    snapshot = make_snapshot(model)
+    snapshot.categorize_as(SnapshotChangeCategory.BREAKING)
+
+    evaluator = SnapshotEvaluator(adapter_mock, audit_concurrent_tasks=3)
+    results = evaluator.audit(snapshot=snapshot, snapshots={})
+
+    assert len(results) == 3
+    assert all(r.count == 0 for r in results)
+    assert adapter_mock.fetchone.call_count == 3
+
+    # Verify that audits ran on worker threads (not the main thread), confirming
+    # that the ThreadPoolExecutor was used rather than the sequential path.
+    main_thread_id = threading.get_ident()
+    assert len(thread_ids) == 3
+    assert all(tid != main_thread_id for tid in thread_ids), (
+        "All audits should run on worker threads, not the main thread"
+    )
+
+
+@pytest.mark.fast
+def test_audit_concurrent_preserves_results_order(adapter_mock, make_snapshot):
+    """Test that audit results are returned in the same order as the audits, even when concurrent."""
+    audit1 = ModelAudit(
+        name="first_audit", query="SELECT * FROM test_schema.test_table WHERE 1 = 0"
+    )
+    audit2 = ModelAudit(
+        name="second_audit", query="SELECT * FROM test_schema.test_table WHERE 1 = 0"
+    )
+    audit3 = ModelAudit(
+        name="third_audit", query="SELECT * FROM test_schema.test_table WHERE 1 = 0"
+    )
+
+    model = SqlModel(
+        name="test_schema.test_table",
+        kind=FullKind(),
+        query=parse_one("SELECT a::int FROM tbl"),
+        audits=[("first_audit", {}), ("second_audit", {}), ("third_audit", {})],
+        audit_definitions={
+            "first_audit": audit1,
+            "second_audit": audit2,
+            "third_audit": audit3,
+        },
+    )
+    snapshot = make_snapshot(model)
+    snapshot.categorize_as(SnapshotChangeCategory.BREAKING)
+
+    adapter_mock.fetchone.return_value = (0,)
+
+    evaluator = SnapshotEvaluator(adapter_mock, audit_concurrent_tasks=3)
+    results = evaluator.audit(snapshot=snapshot, snapshots={})
+
+    assert len(results) == 3
+    assert results[0].audit.name == "first_audit"
+    assert results[1].audit.name == "second_audit"
+    assert results[2].audit.name == "third_audit"
+
+
+@pytest.mark.fast
+def test_audit_concurrent_non_blocking_preserved(adapter_mock, make_snapshot):
+    """Test that force_non_blocking is applied correctly when running audits concurrently."""
+    blocking_audit = ModelAudit(
+        name="blocking_audit",
+        query="SELECT * FROM test_schema.test_table",
+        blocking=True,
+    )
+
+    model = SqlModel(
+        name="test_schema.test_table",
+        kind=FullKind(),
+        query=parse_one("SELECT a::int FROM tbl"),
+        audits=[("blocking_audit", {}), ("blocking_audit", {})],
+        audit_definitions={"blocking_audit": blocking_audit},
+    )
+    snapshot = make_snapshot(model)
+    snapshot.categorize_as(SnapshotChangeCategory.BREAKING)
+
+    adapter_mock.fetchone.return_value = (1,)
+    adapter_mock.SUPPORTS_CLONING = False
+
+    deployability_index = DeployabilityIndex.none_deployable()
+
+    evaluator = SnapshotEvaluator(adapter_mock, audit_concurrent_tasks=2)
+    results = evaluator.audit(
+        snapshot=snapshot,
+        snapshots={},
+        deployability_index=deployability_index,
+    )
+
+    assert len(results) == 2
+    # When force_non_blocking is True, all audits should be non-blocking
+    assert all(not r.blocking for r in results)
+
+
+@pytest.mark.fast
+def test_audit_sequential(adapter_mock, make_snapshot):
+    """Test that audits work correctly when audit_concurrent_tasks=1 (the default sequential path)."""
+    call_order: t.List[str] = []
+
+    audit1 = ModelAudit(name="audit1", query="SELECT * FROM test_schema.test_table WHERE 1 = 0")
+    audit2 = ModelAudit(name="audit2", query="SELECT * FROM test_schema.test_table WHERE 1 = 0")
+    audit3 = ModelAudit(name="audit3", query="SELECT * FROM test_schema.test_table WHERE 1 = 0")
+
+    def record_fetchone(*args, **kwargs):
+        # Identify which audit query is being executed by inspecting call args
+        call_order.append("fetchone")
+        return (0,)
+
+    adapter_mock.fetchone.side_effect = record_fetchone
+
+    model = SqlModel(
+        name="test_schema.test_table",
+        kind=FullKind(),
+        query=parse_one("SELECT a::int FROM tbl"),
+        audits=[("audit1", {}), ("audit2", {}), ("audit3", {})],
+        audit_definitions={
+            "audit1": audit1,
+            "audit2": audit2,
+            "audit3": audit3,
+        },
+    )
+    snapshot = make_snapshot(model)
+    snapshot.categorize_as(SnapshotChangeCategory.BREAKING)
+
+    # Use the default audit_concurrent_tasks=1 (sequential path)
+    evaluator = SnapshotEvaluator(adapter_mock)
+    results = evaluator.audit(snapshot=snapshot, snapshots={})
+
+    assert len(results) == 3
+    assert all(r.count == 0 for r in results)
+    assert adapter_mock.fetchone.call_count == 3
+    # All calls ran sequentially on the main thread
+    assert call_order == ["fetchone", "fetchone", "fetchone"]
+    # Results are returned in the same order as audits were defined
+    assert results[0].audit.name == "audit1"
+    assert results[1].audit.name == "audit2"
+    assert results[2].audit.name == "audit3"

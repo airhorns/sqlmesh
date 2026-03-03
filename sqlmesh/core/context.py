@@ -75,7 +75,11 @@ from sqlmesh.core.dialect import (
     parse_one,
 )
 from sqlmesh.core.engine_adapter import EngineAdapter
-from sqlmesh.core.environment import Environment, EnvironmentNamingInfo, EnvironmentStatements
+from sqlmesh.core.environment import (
+    Environment,
+    EnvironmentNamingInfo,
+    EnvironmentStatements,
+)
 from sqlmesh.core.loader import Loader
 from sqlmesh.core.linter.definition import AnnotatedRuleViolation, Linter
 from sqlmesh.core.linter.rules import BUILTIN_RULES
@@ -494,6 +498,7 @@ class GenericContext(BaseContext, t.Generic[C]):
                 },
                 ddl_concurrent_tasks=self.concurrent_tasks,
                 selected_gateway=self.selected_gateway,
+                audit_concurrent_tasks=self.concurrent_tasks,
             )
         return self._snapshot_evaluator
 
@@ -1124,7 +1129,9 @@ class GenericContext(BaseContext, t.Generic[C]):
         if expand and not isinstance(expand, bool):
             expand = {
                 normalize_model_name(
-                    x, default_catalog=self.default_catalog, dialect=self.default_dialect
+                    x,
+                    default_catalog=self.default_catalog,
+                    dialect=self.default_dialect,
                 )
                 for x in expand
             }
@@ -1437,7 +1444,7 @@ class GenericContext(BaseContext, t.Generic[C]):
             auto_apply if auto_apply is not None else self.config.plan.auto_apply,
             self.default_catalog,
             no_diff=no_diff if no_diff is not None else self.config.plan.no_diff,
-            no_prompts=no_prompts if no_prompts is not None else self.config.plan.no_prompts,
+            no_prompts=(no_prompts if no_prompts is not None else self.config.plan.no_prompts),
         )
 
         return plan
@@ -1523,22 +1530,22 @@ class GenericContext(BaseContext, t.Generic[C]):
             "execution_time": execution_time,
             "create_from": create_from,
             "skip_tests": skip_tests,
-            "restate_models": list(restate_models) if restate_models is not None else None,
+            "restate_models": (list(restate_models) if restate_models is not None else None),
             "no_gaps": no_gaps,
             "skip_backfill": skip_backfill,
             "empty_backfill": empty_backfill,
             "forward_only": forward_only,
-            "allow_destructive_models": list(allow_destructive_models)
-            if allow_destructive_models is not None
-            else None,
-            "allow_additive_models": list(allow_additive_models)
-            if allow_additive_models is not None
-            else None,
+            "allow_destructive_models": (
+                list(allow_destructive_models) if allow_destructive_models is not None else None
+            ),
+            "allow_additive_models": (
+                list(allow_additive_models) if allow_additive_models is not None else None
+            ),
             "no_auto_categorization": no_auto_categorization,
             "effective_from": effective_from,
             "include_unmodified": include_unmodified,
             "select_models": list(select_models) if select_models is not None else None,
-            "backfill_models": list(backfill_models) if backfill_models is not None else None,
+            "backfill_models": (list(backfill_models) if backfill_models is not None else None),
             "enable_preview": enable_preview,
             "run": run,
             "diff_rendered": diff_rendered,
@@ -1918,7 +1925,13 @@ class GenericContext(BaseContext, t.Generic[C]):
                 raise SQLMeshError(e)
 
             models_to_diff: t.List[
-                t.Tuple[Model, EngineAdapter, str, str, t.Optional[t.List[str] | exp.Condition]]
+                t.Tuple[
+                    Model,
+                    EngineAdapter,
+                    str,
+                    str,
+                    t.Optional[t.List[str] | exp.Condition],
+                ]
             ] = []
             models_without_grain: t.List[Model] = []
             source_snapshots_to_name = {
@@ -2407,9 +2420,11 @@ class GenericContext(BaseContext, t.Generic[C]):
 
             results[snapshot] = SnapshotIntervals(
                 snapshot.snapshot_id,
-                intervals
-                if no_signals
-                else snapshot.check_ready_intervals(intervals, execution_context),
+                (
+                    intervals
+                    if no_signals
+                    else snapshot.check_ready_intervals(intervals, execution_context)
+                ),
             )
 
         return results
@@ -2501,10 +2516,14 @@ class GenericContext(BaseContext, t.Generic[C]):
             self.console.log_status_update("")
             print_config(self.config.get_connection(self.gateway), self.console, "Connection")
             print_config(
-                self.config.get_test_connection(self.gateway), self.console, "Test Connection"
+                self.config.get_test_connection(self.gateway),
+                self.console,
+                "Test Connection",
             )
             print_config(
-                self.config.get_state_connection(self.gateway), self.console, "State Connection"
+                self.config.get_state_connection(self.gateway),
+                self.console,
+                "State Connection",
             )
 
         self._try_connection("data warehouse", self.engine_adapter.ping)
@@ -2822,7 +2841,8 @@ class GenericContext(BaseContext, t.Generic[C]):
         if unrestorable_snapshots:
             for snapshot in unrestorable_snapshots:
                 logger.info(
-                    "Found a unrestorable snapshot %s. Restamping the model...", snapshot.name
+                    "Found a unrestorable snapshot %s. Restamping the model...",
+                    snapshot.name,
                 )
                 node = nodes[snapshot.name]
                 nodes[snapshot.name] = node.copy(
@@ -2933,7 +2953,9 @@ class GenericContext(BaseContext, t.Generic[C]):
         return self._provided_state_sync or self._scheduler.create_state_sync(self)
 
     def _new_selector(
-        self, models: t.Optional[UniqueKeyDict[str, Model]] = None, dag: t.Optional[DAG[str]] = None
+        self,
+        models: t.Optional[UniqueKeyDict[str, Model]] = None,
+        dag: t.Optional[DAG[str]] = None,
     ) -> Selector:
         return self._selector_cls(
             self.state_reader,
@@ -2958,7 +2980,9 @@ class GenericContext(BaseContext, t.Generic[C]):
             for user in self.users
         }
         self.notification_target_manager = NotificationTargetManager(
-            event_notifications, user_notification_targets, username=self.config.username
+            event_notifications,
+            user_notification_targets,
+            username=self.config.username,
         )
 
     def _load_materializations(self) -> None:
