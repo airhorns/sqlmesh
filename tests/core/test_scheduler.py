@@ -1713,3 +1713,38 @@ def test_audit_only_no_nested_concurrency(mocker: MockerFixture, make_snapshot):
         assert call.kwargs.get("audit_concurrent_tasks") == 1, (
             "audit_concurrent_tasks=1 must be passed to prevent nested thread pool multiplication"
         )
+
+
+def test_evaluate_skip_audits(mocker: MockerFixture, make_snapshot):
+    snapshot: Snapshot = make_snapshot(
+        SqlModel(
+            name="name",
+            kind=IncrementalByTimeRangeKind(time_column="ds"),
+            query=parse_one("SELECT ds FROM parent.tbl"),
+        )
+    )
+    snapshot.categorize_as(SnapshotChangeCategory.BREAKING)
+
+    state_sync_mock = mocker.MagicMock()
+    scheduler = Scheduler(
+        snapshots=[snapshot],
+        snapshot_evaluator=SnapshotEvaluator(adapters=mocker.MagicMock(), concurrent_tasks=1),
+        state_sync=state_sync_mock,
+        max_workers=1,
+        default_catalog=None,
+    )
+
+    audit_spy = mocker.spy(scheduler, "_audit_snapshot")
+
+    result = scheduler.evaluate(
+        snapshot,
+        start=to_datetime("2022-01-01"),
+        end=to_datetime("2022-01-02"),
+        execution_time=to_datetime("2022-01-02"),
+        deployability_index=DeployabilityIndex.all_deployable(),
+        batch_index=0,
+        skip_audits=True,
+    )
+
+    assert result == []
+    audit_spy.assert_not_called()
