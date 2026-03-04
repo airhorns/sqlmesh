@@ -134,15 +134,12 @@ class SnapshotEvaluator:
             adapter and used for the virtual layer.
         ddl_concurrent_tasks: The number of concurrent tasks used for DDL
             operations (table / view creation, deletion, etc). Default: 1.
-        audit_concurrent_tasks: The number of concurrent tasks used for running
-            audits within a single snapshot. Default: 1.
     """
 
     def __init__(
         self,
         adapters: EngineAdapter | t.Dict[str, EngineAdapter],
         ddl_concurrent_tasks: int = 1,
-        audit_concurrent_tasks: int = 1,
         selected_gateway: t.Optional[str] = None,
     ):
         self.adapters = (
@@ -160,7 +157,6 @@ class SnapshotEvaluator:
         )
         self.selected_gateway = selected_gateway
         self.ddl_concurrent_tasks = ddl_concurrent_tasks
-        self.audit_concurrent_tasks = audit_concurrent_tasks
 
     def evaluate(
         self,
@@ -623,40 +619,25 @@ class SnapshotEvaluator:
                 # when run on only a subset of data, so we switch all audits to non blocking and the user can decide if they still want to proceed
                 force_non_blocking = True
 
-        prepared_audits = []
+        results = []
         for audit, audit_args in audits_with_args:
             if force_non_blocking:
                 # remove any blocking indicator on the model itself
                 audit_args.pop("blocking", None)
                 # so that we can fall back to the audit's setting, which we override to blocking: False
                 audit = audit.model_copy(update={"blocking": False})
-            prepared_audits.append((audit, audit_args))
-
-        def _run_audit(
-            audit_and_args: t.Tuple[Audit, t.Dict[t.Any, t.Any]],
-        ) -> AuditResult:
-            audit, audit_args = audit_and_args
-            return self._audit(
-                audit=audit,
-                audit_args=audit_args,
-                snapshot=snapshot,
-                snapshots=snapshots,
-                start=start,
-                end=end,
-                execution_time=execution_time,
-                deployability_index=deployability_index,
-                **kwargs,
-            )
-
-        # NOTE: audit_concurrent_tasks > 1 requires the underlying adapter to support
-        # multithreaded access. This is automatically satisfied when concurrent_tasks > 1
-        # is set in the connection config, since that value flows to both multithreaded=True
-        # in adapter construction and audit_concurrent_tasks in the evaluator.
-        with self.concurrent_context():
-            results = concurrent_apply_to_values(
-                prepared_audits,
-                _run_audit,
-                self.audit_concurrent_tasks,
+            results.append(
+                self._audit(
+                    audit=audit,
+                    audit_args=audit_args,
+                    snapshot=snapshot,
+                    snapshots=snapshots,
+                    start=start,
+                    end=end,
+                    execution_time=execution_time,
+                    deployability_index=deployability_index,
+                    **kwargs,
+                )
             )
 
         if wap_id is not None:
@@ -701,7 +682,6 @@ class SnapshotEvaluator:
                 for gateway, adapter in self.adapters.items()
             },
             ddl_concurrent_tasks=self.ddl_concurrent_tasks,
-            audit_concurrent_tasks=self.audit_concurrent_tasks,
             selected_gateway=self.selected_gateway,
         )
 

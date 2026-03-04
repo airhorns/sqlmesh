@@ -1,5 +1,4 @@
 from __future__ import annotations
-import threading
 import typing as t
 
 from typing_extensions import Self
@@ -5580,129 +5579,12 @@ def test_grants_in_production_with_dev_only_vde(
 
 
 @pytest.mark.fast
-def test_audit_concurrent(mocker: MockerFixture, adapter_mock, make_snapshot):
-    """Test that audits are executed concurrently when audit_concurrent_tasks > 1."""
-    thread_ids: t.List[int] = []
-    call_lock = threading.Lock()
+def test_audit_runs_all_audits_sequentially(adapter_mock, make_snapshot):
+    """Audits within a snapshot run sequentially in the evaluator.
 
-    def record_thread_fetchone(*args, **kwargs):
-        with call_lock:
-            thread_ids.append(threading.get_ident())
-        return (0,)
-
-    adapter_mock.fetchone.side_effect = record_thread_fetchone
-
-    audit1 = ModelAudit(name="audit1", query="SELECT * FROM test_schema.test_table WHERE 1 = 0")
-    audit2 = ModelAudit(name="audit2", query="SELECT * FROM test_schema.test_table WHERE 1 = 0")
-    audit3 = ModelAudit(name="audit3", query="SELECT * FROM test_schema.test_table WHERE 1 = 0")
-
-    model = SqlModel(
-        name="test_schema.test_table",
-        kind=FullKind(),
-        query=parse_one("SELECT a::int FROM tbl"),
-        audits=[("audit1", {}), ("audit2", {}), ("audit3", {})],
-        audit_definitions={
-            "audit1": audit1,
-            "audit2": audit2,
-            "audit3": audit3,
-        },
-    )
-    snapshot = make_snapshot(model)
-    snapshot.categorize_as(SnapshotChangeCategory.BREAKING)
-
-    evaluator = SnapshotEvaluator(adapter_mock, audit_concurrent_tasks=3)
-    results = evaluator.audit(snapshot=snapshot, snapshots={})
-
-    assert len(results) == 3
-    assert all(r.count == 0 for r in results)
-    assert adapter_mock.fetchone.call_count == 3
-
-    # Verify that audits ran on worker threads (not the main thread), confirming
-    # that the ThreadPoolExecutor was used rather than the sequential path.
-    main_thread_id = threading.get_ident()
-    assert len(thread_ids) == 3
-    assert all(tid != main_thread_id for tid in thread_ids), (
-        "All audits should run on worker threads, not the main thread"
-    )
-
-
-@pytest.mark.fast
-def test_audit_concurrent_preserves_results_order(adapter_mock, make_snapshot):
-    """Test that audit results are returned in the same order as the audits, even when concurrent."""
-    audit1 = ModelAudit(
-        name="first_audit", query="SELECT * FROM test_schema.test_table WHERE 1 = 0"
-    )
-    audit2 = ModelAudit(
-        name="second_audit", query="SELECT * FROM test_schema.test_table WHERE 1 = 0"
-    )
-    audit3 = ModelAudit(
-        name="third_audit", query="SELECT * FROM test_schema.test_table WHERE 1 = 0"
-    )
-
-    model = SqlModel(
-        name="test_schema.test_table",
-        kind=FullKind(),
-        query=parse_one("SELECT a::int FROM tbl"),
-        audits=[("first_audit", {}), ("second_audit", {}), ("third_audit", {})],
-        audit_definitions={
-            "first_audit": audit1,
-            "second_audit": audit2,
-            "third_audit": audit3,
-        },
-    )
-    snapshot = make_snapshot(model)
-    snapshot.categorize_as(SnapshotChangeCategory.BREAKING)
-
-    adapter_mock.fetchone.return_value = (0,)
-
-    evaluator = SnapshotEvaluator(adapter_mock, audit_concurrent_tasks=3)
-    results = evaluator.audit(snapshot=snapshot, snapshots={})
-
-    assert len(results) == 3
-    assert results[0].audit.name == "first_audit"
-    assert results[1].audit.name == "second_audit"
-    assert results[2].audit.name == "third_audit"
-
-
-@pytest.mark.fast
-def test_audit_concurrent_non_blocking_preserved(adapter_mock, make_snapshot):
-    """Test that force_non_blocking is applied correctly when running audits concurrently."""
-    blocking_audit = ModelAudit(
-        name="blocking_audit",
-        query="SELECT * FROM test_schema.test_table",
-        blocking=True,
-    )
-
-    model = SqlModel(
-        name="test_schema.test_table",
-        kind=FullKind(),
-        query=parse_one("SELECT a::int FROM tbl"),
-        audits=[("blocking_audit", {}), ("blocking_audit", {})],
-        audit_definitions={"blocking_audit": blocking_audit},
-    )
-    snapshot = make_snapshot(model)
-    snapshot.categorize_as(SnapshotChangeCategory.BREAKING)
-
-    adapter_mock.fetchone.return_value = (1,)
-    adapter_mock.SUPPORTS_CLONING = False
-
-    deployability_index = DeployabilityIndex.none_deployable()
-
-    evaluator = SnapshotEvaluator(adapter_mock, audit_concurrent_tasks=2)
-    results = evaluator.audit(
-        snapshot=snapshot,
-        snapshots={},
-        deployability_index=deployability_index,
-    )
-
-    assert len(results) == 2
-    # When force_non_blocking is True, all audits should be non-blocking
-    assert all(not r.blocking for r in results)
-
-
-@pytest.mark.fast
-def test_audit_sequential(adapter_mock, make_snapshot):
-    """Test that audits work correctly when audit_concurrent_tasks=1 (the default sequential path)."""
+    Cross-snapshot audit concurrency is managed at the scheduler level via
+    _run_audits_concurrently, not within the evaluator itself.
+    """
     call_order: t.List[str] = []
 
     audit1 = ModelAudit(name="audit1", query="SELECT * FROM test_schema.test_table WHERE 1 = 0")
@@ -5710,7 +5592,6 @@ def test_audit_sequential(adapter_mock, make_snapshot):
     audit3 = ModelAudit(name="audit3", query="SELECT * FROM test_schema.test_table WHERE 1 = 0")
 
     def record_fetchone(*args, **kwargs):
-        # Identify which audit query is being executed by inspecting call args
         call_order.append("fetchone")
         return (0,)
 
@@ -5730,14 +5611,12 @@ def test_audit_sequential(adapter_mock, make_snapshot):
     snapshot = make_snapshot(model)
     snapshot.categorize_as(SnapshotChangeCategory.BREAKING)
 
-    # Use the default audit_concurrent_tasks=1 (sequential path)
     evaluator = SnapshotEvaluator(adapter_mock)
     results = evaluator.audit(snapshot=snapshot, snapshots={})
 
     assert len(results) == 3
     assert all(r.count == 0 for r in results)
     assert adapter_mock.fetchone.call_count == 3
-    # All calls ran sequentially on the main thread
     assert call_order == ["fetchone", "fetchone", "fetchone"]
     # Results are returned in the same order as audits were defined
     assert results[0].audit.name == "audit1"

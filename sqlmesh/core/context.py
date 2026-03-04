@@ -498,7 +498,6 @@ class GenericContext(BaseContext, t.Generic[C]):
                 },
                 ddl_concurrent_tasks=self.concurrent_tasks,
                 selected_gateway=self.selected_gateway,
-                audit_concurrent_tasks=self.concurrent_tasks,
             )
         return self._snapshot_evaluator
 
