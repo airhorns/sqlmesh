@@ -559,23 +559,19 @@ class Scheduler:
                         snapshot = self.snapshots_by_name[node.snapshot_name]
 
                         if isinstance(node, EvaluateNode):
-                            self.console.start_snapshot_evaluation_progress(snapshot)
-                            execution_start_ts = now_timestamp()
-                            evaluation_duration_ms: t.Optional[int] = None
+                            assert execution_time  # mypy
+                            assert deployability_index  # mypy
                             node_start, node_end = node.interval
 
-                            audit_results: t.List[AuditResult] = []
-                            try:
-                                assert execution_time  # mypy
-                                assert deployability_index  # mypy
+                            # If batch_index > 0, then the target table must exist since the
+                            # first batch would have created it
+                            target_table_exists = (
+                                snapshot.snapshot_id not in snapshots_to_create
+                                or node.batch_index > 0
+                            )
 
-                                # If batch_index > 0, then the target table must exist since the
-                                # first batch would have created it
-                                target_table_exists = (
-                                    snapshot.snapshot_id not in snapshots_to_create
-                                    or node.batch_index > 0
-                                )
-                                audit_results = self.evaluate(
+                            def _do_evaluate() -> t.List[AuditResult]:
+                                return self.evaluate(
                                     snapshot=snapshot,
                                     environment_naming_info=environment_naming_info,
                                     start=node_start,
@@ -589,34 +585,13 @@ class Scheduler:
                                     selected_models=selected_models,
                                 )
 
-                                evaluation_duration_ms = now_timestamp() - execution_start_ts
-                            finally:
-                                num_audits = len(audit_results)
-                                num_audits_failed = sum(
-                                    1 for result in audit_results if result.count
-                                )
-
-                                execution_stats = (
-                                    self.snapshot_evaluator.execution_tracker.get_execution_stats(
-                                        SnapshotIdBatch(
-                                            snapshot_id=snapshot.snapshot_id,
-                                            batch_id=node.batch_index,
-                                        )
-                                    )
-                                )
-
-                                self.console.update_snapshot_evaluation_progress(
-                                    snapshot,
-                                    batched_intervals[snapshot][node.batch_index],
-                                    node.batch_index,
-                                    evaluation_duration_ms,
-                                    num_audits - num_audits_failed,
-                                    num_audits_failed,
-                                    execution_stats=execution_stats,
-                                    auto_restatement_triggers=auto_restatement_triggers.get(
-                                        snapshot.snapshot_id
-                                    ),
-                                )
+                            self._run_node_with_progress(
+                                snapshot=snapshot,
+                                node=node,
+                                batched_intervals=batched_intervals,
+                                auto_restatement_triggers=auto_restatement_triggers,
+                                work_fn=_do_evaluate,
+                            )
                         elif isinstance(node, CreateNode):
                             self.snapshot_evaluator.create_snapshot(
                                 snapshot=snapshot,
@@ -977,6 +952,51 @@ class Scheduler:
 
         return audit_results
 
+    def _run_node_with_progress(
+        self,
+        *,
+        snapshot: Snapshot,
+        node: EvaluateNode,
+        batched_intervals: t.Dict[Snapshot, Intervals],
+        auto_restatement_triggers: t.Dict[SnapshotId, t.List[SnapshotId]],
+        work_fn: t.Callable[[], t.List[AuditResult]],
+    ) -> None:
+        """Runs a work function for a node while tracking progress and audit results.
+
+        Args:
+            snapshot: The snapshot being processed.
+            node: The evaluate node.
+            batched_intervals: The batched intervals per snapshot.
+            auto_restatement_triggers: Auto restatement trigger info per snapshot.
+            work_fn: A callable that performs the actual work and returns audit results.
+        """
+        self.console.start_snapshot_evaluation_progress(snapshot)
+        execution_start_ts = now_timestamp()
+        evaluation_duration_ms: t.Optional[int] = None
+
+        audit_results: t.List[AuditResult] = []
+        try:
+            audit_results = work_fn()
+            evaluation_duration_ms = now_timestamp() - execution_start_ts
+        finally:
+            num_audits = len(audit_results)
+            num_audits_failed = sum(1 for result in audit_results if result.count)
+
+            execution_stats = self.snapshot_evaluator.execution_tracker.get_execution_stats(
+                SnapshotIdBatch(snapshot_id=snapshot.snapshot_id, batch_id=node.batch_index)
+            )
+
+            self.console.update_snapshot_evaluation_progress(
+                snapshot,
+                batched_intervals[snapshot][node.batch_index],
+                node.batch_index,
+                evaluation_duration_ms,
+                num_audits - num_audits_failed,
+                num_audits_failed,
+                execution_stats=execution_stats,
+                auto_restatement_triggers=auto_restatement_triggers.get(snapshot.snapshot_id),
+            )
+
     def _run_audits_concurrently(
         self,
         *,
@@ -1026,13 +1046,8 @@ class Scheduler:
             snapshot = self.snapshots_by_name[node.snapshot_name]
             node_start, node_end = node.interval
 
-            self.console.start_snapshot_evaluation_progress(snapshot)
-            execution_start_ts = now_timestamp()
-            evaluation_duration_ms: t.Optional[int] = None
-
-            audit_results: t.List[AuditResult] = []
-            try:
-                audit_results = self._audit_snapshot(
+            def _do_audit() -> t.List[AuditResult]:
+                return self._audit_snapshot(
                     snapshot=snapshot,
                     environment_naming_info=environment_naming_info,
                     deployability_index=deployability_index,
@@ -1041,25 +1056,14 @@ class Scheduler:
                     end=node_end,
                     execution_time=execution_time,
                 )
-                evaluation_duration_ms = now_timestamp() - execution_start_ts
-            finally:
-                num_audits = len(audit_results)
-                num_audits_failed = sum(1 for result in audit_results if result.count)
 
-                execution_stats = self.snapshot_evaluator.execution_tracker.get_execution_stats(
-                    SnapshotIdBatch(snapshot_id=snapshot.snapshot_id, batch_id=node.batch_index)
-                )
-
-                self.console.update_snapshot_evaluation_progress(
-                    snapshot,
-                    batched_intervals[snapshot][node.batch_index],
-                    node.batch_index,
-                    evaluation_duration_ms,
-                    num_audits - num_audits_failed,
-                    num_audits_failed,
-                    execution_stats=execution_stats,
-                    auto_restatement_triggers=auto_restatement_triggers.get(snapshot.snapshot_id),
-                )
+            self._run_node_with_progress(
+                snapshot=snapshot,
+                node=node,
+                batched_intervals=batched_intervals,
+                auto_restatement_triggers=auto_restatement_triggers,
+                work_fn=_do_audit,
+            )
 
         def run_audit_task_collecting_errors(node: EvaluateNode) -> None:
             try:

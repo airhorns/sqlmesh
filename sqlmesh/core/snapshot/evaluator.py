@@ -132,17 +132,15 @@ class SnapshotEvaluator:
             the key is the gateway name. When a dictionary is provided, and not an
             explicit default gateway its first item is treated as the default
             adapter and used for the virtual layer.
-        ddl_concurrent_tasks: The number of concurrent tasks used for DDL
-            operations (table / view creation, deletion, etc). Default: 1.
-        audit_concurrent_tasks: The number of concurrent tasks used for running
+        concurrent_tasks: The number of concurrent tasks used for DDL
+            operations (table / view creation, deletion, etc) and for running
             audits within a single snapshot. Default: 1.
     """
 
     def __init__(
         self,
         adapters: EngineAdapter | t.Dict[str, EngineAdapter],
-        ddl_concurrent_tasks: int = 1,
-        audit_concurrent_tasks: int = 1,
+        concurrent_tasks: int = 1,
         selected_gateway: t.Optional[str] = None,
     ):
         self.adapters = (
@@ -159,8 +157,7 @@ class SnapshotEvaluator:
             else self.adapters[selected_gateway]
         )
         self.selected_gateway = selected_gateway
-        self.ddl_concurrent_tasks = ddl_concurrent_tasks
-        self.audit_concurrent_tasks = audit_concurrent_tasks
+        self.concurrent_tasks = concurrent_tasks
 
     def evaluate(
         self,
@@ -341,7 +338,7 @@ class SnapshotEvaluator:
                     deployability_index=deployability_index,  # type: ignore
                     on_complete=on_complete,
                 ),
-                self.ddl_concurrent_tasks,
+                self.concurrent_tasks,
             )
 
     def demote(
@@ -369,7 +366,7 @@ class SnapshotEvaluator:
                     on_complete=on_complete,
                     table_mapping=table_mapping,
                 ),
-                self.ddl_concurrent_tasks,
+                self.concurrent_tasks,
             )
 
     def create(
@@ -481,7 +478,7 @@ class SnapshotEvaluator:
                     allow_additive_snapshots=allow_additive_snapshots,
                     on_complete=on_complete,
                 ),
-                self.ddl_concurrent_tasks,
+                self.concurrent_tasks,
                 raise_on_error=False,
             )
             if errors:
@@ -528,7 +525,7 @@ class SnapshotEvaluator:
                     self.get_adapter(s.model_gateway),
                     deployability_index,
                 ),
-                self.ddl_concurrent_tasks,
+                self.concurrent_tasks,
             )
 
     def cleanup(
@@ -557,7 +554,7 @@ class SnapshotEvaluator:
                     self.get_adapter(s.model_gateway),
                     on_complete,
                 ),
-                self.ddl_concurrent_tasks,
+                self.concurrent_tasks,
                 reverse_order=True,
             )
 
@@ -648,16 +645,11 @@ class SnapshotEvaluator:
                 **kwargs,
             )
 
-        # NOTE: audit_concurrent_tasks > 1 requires the underlying adapter to support
-        # multithreaded access. This is automatically satisfied when concurrent_tasks > 1
-        # is set in the connection config, since that value flows to both multithreaded=True
-        # in adapter construction and audit_concurrent_tasks in the evaluator.
-        with self.concurrent_context():
-            results = concurrent_apply_to_values(
-                prepared_audits,
-                _run_audit,
-                self.audit_concurrent_tasks,
-            )
+        results = concurrent_apply_to_values(
+            prepared_audits,
+            _run_audit,
+            self.concurrent_tasks,
+        )
 
         if wap_id is not None:
             logger.info(
@@ -700,8 +692,7 @@ class SnapshotEvaluator:
                 gateway: adapter.with_settings(correlation_id=correlation_id)
                 for gateway, adapter in self.adapters.items()
             },
-            ddl_concurrent_tasks=self.ddl_concurrent_tasks,
-            audit_concurrent_tasks=self.audit_concurrent_tasks,
+            concurrent_tasks=self.concurrent_tasks,
             selected_gateway=self.selected_gateway,
         )
 
@@ -1490,7 +1481,7 @@ class SnapshotEvaluator:
             concurrent_apply_to_values(
                 list(unique_schemas),
                 lambda item: _create_schema(item[0], item[1], item[2]),
-                self.ddl_concurrent_tasks,
+                self.concurrent_tasks,
             )
 
     def get_adapter(self, gateway: t.Optional[str] = None) -> EngineAdapter:
@@ -1665,7 +1656,7 @@ class SnapshotEvaluator:
                     lambda s: _get_data_objects_in_schema(
                         schema=s, object_names=tables_by_schema.get(s), gateway=gateway
                     ),
-                    self.ddl_concurrent_tasks,
+                    self.concurrent_tasks,
                 )
 
                 for schema, objs in zip(schema_list, results):

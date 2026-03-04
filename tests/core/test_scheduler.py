@@ -154,7 +154,7 @@ def test_incremental_by_unique_key_kind_dag(
             query=parse_one("SELECT id FROM VALUES (1), (2) AS t(id)"),
         ),
     )
-    snapshot_evaluator = SnapshotEvaluator(adapters=mocker.MagicMock(), ddl_concurrent_tasks=1)
+    snapshot_evaluator = SnapshotEvaluator(adapters=mocker.MagicMock(), concurrent_tasks=1)
     mock_state_sync = mocker.MagicMock()
     scheduler = Scheduler(
         snapshots=[unique_by_key_snapshot],
@@ -196,7 +196,7 @@ def test_incremental_time_self_reference_dag(
     incremental_self_snapshot.add_interval("2023-01-02", "2023-01-02")
     incremental_self_snapshot.add_interval("2023-01-05", "2023-01-05")
 
-    snapshot_evaluator = SnapshotEvaluator(adapters=mocker.MagicMock(), ddl_concurrent_tasks=1)
+    snapshot_evaluator = SnapshotEvaluator(adapters=mocker.MagicMock(), concurrent_tasks=1)
     scheduler = Scheduler(
         snapshots=[incremental_self_snapshot],
         snapshot_evaluator=snapshot_evaluator,
@@ -452,7 +452,7 @@ def test_incremental_batch_concurrency(
         ),
     )
 
-    snapshot_evaluator = SnapshotEvaluator(adapters=mocker.MagicMock(), ddl_concurrent_tasks=1)
+    snapshot_evaluator = SnapshotEvaluator(adapters=mocker.MagicMock(), concurrent_tasks=1)
     mock_state_sync = mocker.MagicMock()
     scheduler = Scheduler(
         snapshots=[snapshot],
@@ -493,7 +493,7 @@ def test_intervals_with_end_date_on_model(
         )
     )
 
-    snapshot_evaluator = SnapshotEvaluator(adapters=mocker.MagicMock(), ddl_concurrent_tasks=1)
+    snapshot_evaluator = SnapshotEvaluator(adapters=mocker.MagicMock(), concurrent_tasks=1)
     scheduler = Scheduler(
         snapshots=[snapshot],
         snapshot_evaluator=snapshot_evaluator,
@@ -783,7 +783,7 @@ def test_signal_intervals(mocker: MockerFixture, make_snapshot, get_batched_miss
         nodes={a.name: a.model, b.name: b.model, c.name: c.model},
     )
 
-    snapshot_evaluator = SnapshotEvaluator(adapters=mocker.MagicMock(), ddl_concurrent_tasks=1)
+    snapshot_evaluator = SnapshotEvaluator(adapters=mocker.MagicMock(), concurrent_tasks=1)
     scheduler = Scheduler(
         snapshots=[a, b, c, d],
         snapshot_evaluator=snapshot_evaluator,
@@ -871,7 +871,7 @@ def test_signals_snapshots_out_of_order(
         nodes={snapshot_a.name: snapshot_a.model, snapshot_b.name: snapshot_b.model},
     )
 
-    snapshot_evaluator = SnapshotEvaluator(adapters=mocker.MagicMock(), ddl_concurrent_tasks=1)
+    snapshot_evaluator = SnapshotEvaluator(adapters=mocker.MagicMock(), concurrent_tasks=1)
     scheduler = Scheduler(
         snapshots=[snapshot_c, snapshot_b, snapshot_a],  # reverse order
         snapshot_evaluator=snapshot_evaluator,
@@ -939,7 +939,7 @@ def test_scd_type_2_batch_size(
     snapshot = make_snapshot(model)
 
     # Setup scheduler
-    snapshot_evaluator = SnapshotEvaluator(adapters=mocker.MagicMock(), ddl_concurrent_tasks=1)
+    snapshot_evaluator = SnapshotEvaluator(adapters=mocker.MagicMock(), concurrent_tasks=1)
     scheduler = Scheduler(
         snapshots=[snapshot],
         snapshot_evaluator=snapshot_evaluator,

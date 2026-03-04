@@ -5580,7 +5580,7 @@ def test_grants_in_production_with_dev_only_vde(
 
 @pytest.mark.fast
 def test_audit_runs_all_audits_sequentially(adapter_mock, make_snapshot):
-    """Audits within a snapshot run sequentially when audit_concurrent_tasks=1 (default)."""
+    """Audits within a snapshot run sequentially when concurrent_tasks=1 (default)."""
     call_order: t.List[str] = []
 
     audit1 = ModelAudit(name="audit1", query="SELECT * FROM test_schema.test_table WHERE 1 = 0")
@@ -5622,7 +5622,7 @@ def test_audit_runs_all_audits_sequentially(adapter_mock, make_snapshot):
 
 @pytest.mark.fast
 def test_audit_runs_concurrently_when_configured(adapter_mock, make_snapshot):
-    """Audits within a snapshot run concurrently when audit_concurrent_tasks > 1.
+    """Audits within a snapshot run concurrently when concurrent_tasks > 1.
 
     Uses thread IDs to verify that audits are dispatched from multiple threads,
     not a timing-based assertion.
@@ -5657,7 +5657,7 @@ def test_audit_runs_concurrently_when_configured(adapter_mock, make_snapshot):
     snapshot = make_snapshot(model)
     snapshot.categorize_as(SnapshotChangeCategory.BREAKING)
 
-    evaluator = SnapshotEvaluator(adapter_mock, audit_concurrent_tasks=3)
+    evaluator = SnapshotEvaluator(adapter_mock, concurrent_tasks=3)
     results = evaluator.audit(snapshot=snapshot, snapshots={})
 
     assert len(results) == 3
