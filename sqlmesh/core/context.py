@@ -497,6 +497,7 @@ class GenericContext(BaseContext, t.Generic[C]):
                     for gateway, adapter in self.engine_adapters.items()
                 },
                 ddl_concurrent_tasks=self.concurrent_tasks,
+                audit_concurrent_tasks=self.concurrent_tasks,
                 selected_gateway=self.selected_gateway,
             )
         return self._snapshot_evaluator
