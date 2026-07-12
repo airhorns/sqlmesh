@@ -3004,8 +3004,8 @@ def test_check_intervals(sushi_context, mocker):
     assert tuple(intervals.values())[0].intervals
 
 
-def test_audit():
-    context = Context(config=Config())
+def test_audit(mocker: MockerFixture):
+    context = Context(config=Config(), concurrent_tasks=1)
 
     parsed_model = parse(
         """
@@ -3020,9 +3020,34 @@ def test_audit():
         """
     )
     context.upsert_model(load_sql_based_model(parsed_model))
-    context.plan(no_prompts=True, auto_apply=True)
+    context.upsert_model(
+        load_sql_based_model(
+            parse(
+                """
+                MODEL (
+                  name dummy_b,
+                  audits (
+                    not_null_non_blocking(columns=[c])
+                  )
+                );
 
-    assert context.audit(models=["dummy"], start="2020-01-01", end="2020-01-01") is False
+                SELECT NULL AS c
+                """
+            )
+        )
+    )
+    context.plan(no_prompts=True, auto_apply=True)
+    context._concurrent_tasks = 2
+
+    concurrent_spy = mocker.spy(sqlmesh.core.context, "concurrent_apply_to_values")
+
+    assert context.audit(models=["dummy", "dummy_b"], start="2020-01-01", end="2020-01-01") is False
+    assert concurrent_spy.call_args.args[2] == 2
+    assert {snapshot.name for snapshot in concurrent_spy.call_args.args[0]} == {
+        '"dummy"',
+        '"dummy_b"',
+    }
+    assert concurrent_spy.call_args.args[1]
 
     parsed_model = parse(
         """

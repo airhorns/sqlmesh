@@ -2343,7 +2343,7 @@ class GenericContext(BaseContext, t.Generic[C]):
             False if any of the audits failed, True otherwise.
         """
 
-        snapshots = (
+        snapshots = list(
             [self.get_snapshot(model, raise_if_missing=True) for model in models]
             if models
             else self.snapshots.values()
@@ -2352,16 +2352,24 @@ class GenericContext(BaseContext, t.Generic[C]):
         num_audits = sum(len(snapshot.node.audits_with_args) for snapshot in snapshots)
         self.console.log_status_update(f"Found {num_audits} audit(s).")
 
-        errors = []
-        skipped_count = 0
-        for snapshot in snapshots:
-            for audit_result in self.snapshot_evaluator.audit(
+        audit_result_groups = concurrent_apply_to_values(
+            snapshots,
+            lambda snapshot: self.snapshot_evaluator.audit(
                 snapshot=snapshot,
                 start=start,
                 end=end,
                 execution_time=execution_time,
                 snapshots=self.snapshots,
-            ):
+                # The outer pool already occupies all configured worker slots.
+                audit_concurrent_tasks=1,
+            ),
+            self.concurrent_tasks,
+        )
+
+        errors = []
+        skipped_count = 0
+        for audit_results in audit_result_groups:
+            for audit_result in audit_results:
                 audit_id = f"{audit_result.audit.name}"
                 if audit_result.model:
                     audit_id += f" on model {audit_result.model.name}"
