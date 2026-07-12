@@ -155,7 +155,6 @@ web/client/dist
 .local/
 
 # Version file
-sqlmesh/_version.py
 tests/_version.py
 
 # spark
@@ -164,4 +163,3 @@ spark-warehouse/
 
 # claude
 .claude/
-
