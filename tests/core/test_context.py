@@ -3037,17 +3037,22 @@ def test_audit(mocker: MockerFixture):
         )
     )
     context.plan(no_prompts=True, auto_apply=True)
-    context._concurrent_tasks = 2
-
-    concurrent_spy = mocker.spy(sqlmesh.core.context, "concurrent_apply_to_values")
 
     assert context.audit(models=["dummy", "dummy_b"], start="2020-01-01", end="2020-01-01") is False
+
+    context._concurrent_tasks = 2
+    concurrent_spy = mocker.spy(sqlmesh.core.context, "concurrent_apply_to_values")
+    evaluator_spy = mocker.patch.object(context.snapshot_evaluator, "audit", return_value=[])
+    assert context.audit(models=["dummy", "dummy_b"], start="2020-01-01", end="2020-01-01") is True
     assert concurrent_spy.call_args.args[2] == 2
     assert {snapshot.name for snapshot in concurrent_spy.call_args.args[0]} == {
         '"dummy"',
         '"dummy_b"',
     }
     assert concurrent_spy.call_args.args[1]
+    assert evaluator_spy.call_count == 2
+    mocker.stop(evaluator_spy)
+    context._concurrent_tasks = 1
 
     parsed_model = parse(
         """
@@ -3065,6 +3070,15 @@ def test_audit(mocker: MockerFixture):
     context.plan(no_prompts=True, auto_apply=True)
 
     assert context.audit(models=["dummy"], start="2020-01-01", end="2020-01-01") is True
+    assert (
+        context.audit(
+            select_models=["dummy"],
+            start="2020-01-01",
+            end="2020-01-01",
+            environment="prod",
+        )
+        is True
+    )
 
     # An explicit environment audits its promoted snapshots, not an unplanned local edit.
     context.upsert_model(
@@ -3092,6 +3106,15 @@ def test_audit(mocker: MockerFixture):
         )
         is True
     )
+
+    with pytest.raises(ConfigError, match="Only one of"):
+        context.audit(
+            models=["dummy"],
+            select_models=["dummy"],
+            start="2020-01-01",
+            end="2020-01-01",
+            environment="prod",
+        )
 
 
 def test_prompt_if_uncategorized_snapshot(mocker: MockerFixture, tmp_path: Path) -> None:

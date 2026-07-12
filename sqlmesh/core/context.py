@@ -2329,6 +2329,7 @@ class GenericContext(BaseContext, t.Generic[C]):
         end: TimeLike,
         *,
         models: t.Optional[t.Iterator[str]] = None,
+        select_models: t.Optional[t.Collection[str]] = None,
         execution_time: t.Optional[TimeLike] = None,
         environment: t.Optional[str] = None,
     ) -> bool:
@@ -2338,6 +2339,8 @@ class GenericContext(BaseContext, t.Generic[C]):
             start: The start of the interval to audit.
             end: The end of the interval to audit.
             models: The models to audit. All models will be audited if not specified.
+            select_models: Model selection expressions to audit. Selection traversals can
+                include standalone audits. Mutually exclusive with ``models``.
             execution_time: The date/time time reference to use for execution time. Defaults to now.
             environment: The environment whose promoted snapshots should be audited. If omitted,
                 snapshots are sourced from the currently loaded local project state.
@@ -2361,11 +2364,24 @@ class GenericContext(BaseContext, t.Generic[C]):
             snapshot_mapping = self.snapshots
             deployability_index = DeployabilityIndex.all_deployable()
 
-        snapshots = list(
-            [snapshot_mapping[self._node_or_snapshot_to_fqn(model)] for model in models]
-            if models
-            else snapshot_mapping.values()
-        )
+        if models and select_models:
+            raise ConfigError("Only one of 'models' or 'select_models' may be provided.")
+
+        if select_models:
+            nodes = UniqueKeyDict(
+                "nodes",
+                **{snapshot.name: snapshot.node for snapshot in snapshot_mapping.values()},
+            )
+            dag: DAG[str] = DAG()
+            for fqn, node in nodes.items():
+                dag.add(fqn, node.depends_on)
+            selector = self._new_selector(models=nodes, dag=dag)  # type: ignore[arg-type]
+            selected_names = selector.expand_model_selections(select_models, models=nodes)
+            snapshots = [snapshot_mapping[name] for name in selected_names]
+        elif models:
+            snapshots = [snapshot_mapping[self._node_or_snapshot_to_fqn(model)] for model in models]
+        else:
+            snapshots = list(snapshot_mapping.values())
 
         num_audits = sum(len(snapshot.node.audits_with_args) for snapshot in snapshots)
         self.console.log_status_update(f"Found {num_audits} audit(s).")

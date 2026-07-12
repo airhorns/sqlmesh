@@ -820,6 +820,12 @@ def test(
     multiple=True,
     help="A model to audit. Multiple models can be audited.",
 )
+@click.option(
+    "--select-model",
+    "select_models",
+    multiple=True,
+    help="Select models and standalone audits using model selection expressions.",
+)
 @opt.start_time
 @opt.end_time
 @opt.execution_time
@@ -830,6 +836,7 @@ def test(
 def audit(
     obj: Context,
     models: t.Iterator[str],
+    select_models: t.Tuple[str, ...],
     start: TimeLike,
     end: TimeLike,
     execution_time: t.Optional[TimeLike] = None,
@@ -838,6 +845,7 @@ def audit(
     """Run audits for the target model(s)."""
     if not obj.audit(
         models=models,
+        select_models=select_models,
         start=start,
         end=end,
         execution_time=execution_time,
