@@ -3066,6 +3066,33 @@ def test_audit(mocker: MockerFixture):
 
     assert context.audit(models=["dummy"], start="2020-01-01", end="2020-01-01") is True
 
+    # An explicit environment audits its promoted snapshots, not an unplanned local edit.
+    context.upsert_model(
+        load_sql_based_model(
+            parse(
+                """
+                MODEL (
+                  name dummy,
+                  audits (
+                    not_null_non_blocking(columns=[c])
+                  )
+                );
+
+                SELECT NULL AS c
+                """
+            )
+        )
+    )
+    assert (
+        context.audit(
+            models=["dummy"],
+            start="2020-01-01",
+            end="2020-01-01",
+            environment="prod",
+        )
+        is True
+    )
+
 
 def test_prompt_if_uncategorized_snapshot(mocker: MockerFixture, tmp_path: Path) -> None:
     init_example_project(tmp_path, engine_type="duckdb")

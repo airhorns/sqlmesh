@@ -2330,6 +2330,7 @@ class GenericContext(BaseContext, t.Generic[C]):
         *,
         models: t.Optional[t.Iterator[str]] = None,
         execution_time: t.Optional[TimeLike] = None,
+        environment: t.Optional[str] = None,
     ) -> bool:
         """Audit models.
 
@@ -2338,15 +2339,32 @@ class GenericContext(BaseContext, t.Generic[C]):
             end: The end of the interval to audit.
             models: The models to audit. All models will be audited if not specified.
             execution_time: The date/time time reference to use for execution time. Defaults to now.
+            environment: The environment whose promoted snapshots should be audited. If omitted,
+                snapshots are sourced from the currently loaded local project state.
 
         Returns:
             False if any of the audits failed, True otherwise.
         """
 
+        if environment is not None:
+            stored_environment = self.state_reader.get_environment(environment)
+            if stored_environment is None:
+                raise ConfigError(f"Environment '{environment}' was not found.")
+            snapshot_mapping = {
+                snapshot.name: snapshot
+                for snapshot in self.state_reader.get_snapshots(
+                    stored_environment.snapshots
+                ).values()
+            }
+            deployability_index = DeployabilityIndex.create(snapshot_mapping.values())
+        else:
+            snapshot_mapping = self.snapshots
+            deployability_index = DeployabilityIndex.all_deployable()
+
         snapshots = list(
-            [self.get_snapshot(model, raise_if_missing=True) for model in models]
+            [snapshot_mapping[self._node_or_snapshot_to_fqn(model)] for model in models]
             if models
-            else self.snapshots.values()
+            else snapshot_mapping.values()
         )
 
         num_audits = sum(len(snapshot.node.audits_with_args) for snapshot in snapshots)
@@ -2359,7 +2377,8 @@ class GenericContext(BaseContext, t.Generic[C]):
                 start=start,
                 end=end,
                 execution_time=execution_time,
-                snapshots=self.snapshots,
+                snapshots=snapshot_mapping,
+                deployability_index=deployability_index,
                 # The outer pool already occupies all configured worker slots.
                 audit_concurrent_tasks=1,
             ),

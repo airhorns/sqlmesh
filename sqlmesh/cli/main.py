@@ -823,6 +823,7 @@ def test(
 @opt.start_time
 @opt.end_time
 @opt.execution_time
+@click.argument("environment", required=False)
 @click.pass_obj
 @error_handler
 @cli_analytics
@@ -832,9 +833,16 @@ def audit(
     start: TimeLike,
     end: TimeLike,
     execution_time: t.Optional[TimeLike] = None,
+    environment: t.Optional[str] = None,
 ) -> None:
     """Run audits for the target model(s)."""
-    if not obj.audit(models=models, start=start, end=end, execution_time=execution_time):
+    if not obj.audit(
+        models=models,
+        start=start,
+        end=end,
+        execution_time=execution_time,
+        environment=environment,
+    ):
         exit(1)
 
 
