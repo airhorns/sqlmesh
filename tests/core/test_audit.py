@@ -689,6 +689,12 @@ def test_standalone_audit(model: Model, assert_exp_eq):
         name="blocking_test_audit", query=parse_one("SELECT 1"), blocking=True
     )
     assert blocking_audit.blocking
+    assert (
+        blocking_audit.metadata_hash
+        != StandaloneAudit(
+            name="blocking_test_audit", query=parse_one("SELECT 1"), blocking=False
+        ).metadata_hash
+    )
 
 
 def test_render_definition():

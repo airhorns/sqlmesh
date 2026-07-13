@@ -280,6 +280,8 @@ class StandaloneAudit(_Node, AuditMixin):
                 self.stamp,
                 self.cron,
                 self.cron_tz.key if self.cron_tz else None,
+                str(self.blocking),
+                str(self.skip),
             ]
 
             data.append(self.query_.sql)
