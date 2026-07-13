@@ -2238,6 +2238,21 @@ class StarRocksEngineAdapter(
         # Use setdefault to simplify table_properties access
         table_properties = kwargs.setdefault("table_properties", {})
 
+        # StarRocks interprets a bare VARCHAR declaration as VARCHAR(1), while
+        # SQLGlot uses bare VARCHAR to represent an inferred, unbounded string.
+        # Persist inferred strings as STRING (VARCHAR(65533) in StarRocks) so a
+        # schema inferred from the first literal or row does not reject longer
+        # values during the subsequent INSERT. Explicit VARCHAR(n) declarations
+        # retain their requested bound.
+        target_columns_to_types = {
+            column: (
+                exp.DataType.build("TEXT")
+                if data_type.this == exp.DType.VARCHAR and not data_type.expressions
+                else data_type
+            )
+            for column, data_type in target_columns_to_types.items()
+        }
+
         # Extract and validate key columns from table_properties
         # Priority: parameter primary_key > table_properties (already handled above)
         key_type, key_columns = self._extract_and_validate_key_columns(

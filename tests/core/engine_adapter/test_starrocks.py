@@ -188,6 +188,19 @@ class TestTableOperations:
         assert "`a` INT" in sql
         assert "`b` VARCHAR(100)" in sql
 
+    def test_create_table_expands_unbounded_varchar(
+        self, make_mocked_engine_adapter: t.Callable[..., StarRocksEngineAdapter]
+    ):
+        """A bare VARCHAR must not become StarRocks' implicit VARCHAR(1)."""
+        adapter = make_mocked_engine_adapter(StarRocksEngineAdapter)
+        adapter.create_table(
+            "test_table",
+            target_columns_to_types={"value": exp.DataType.build("VARCHAR")},
+        )
+
+        sql = to_sql_calls(adapter)[0]
+        assert "`value` STRING" in sql
+
     def test_create_table_like(
         self, make_mocked_engine_adapter: t.Callable[..., StarRocksEngineAdapter]
     ):
