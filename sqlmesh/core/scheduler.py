@@ -516,13 +516,12 @@ class Scheduler:
 
         try:
             with self.snapshot_evaluator.concurrent_context():
-                # We only need to create physical tables if the snapshot is not representative
-                # or if it needs backfill.
-                snapshots_to_create_candidates = [
-                    s
-                    for s in selected_snapshots
-                    if not deployability_index.is_representative(s) or s in batched_intervals
-                ]
+                # Reconcile the physical layer for every selected snapshot. A plan can contain
+                # both snapshots with missing intervals and snapshots (notably VIEW models) that
+                # have no batches. In that case the physical-layer update stage is skipped and
+                # the scheduler is responsible for creating any missing physical objects. Only
+                # checking snapshots with batches leaves those views absent until promotion.
+                snapshots_to_create_candidates = selected_snapshots
                 snapshots_to_create = {
                     s.snapshot_id
                     for s in self.snapshot_evaluator.get_snapshots_to_create(

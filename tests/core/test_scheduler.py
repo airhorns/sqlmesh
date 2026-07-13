@@ -16,6 +16,7 @@ from sqlmesh.core.model.kind import (
     IncrementalByUniqueKeyKind,
     TimeColumn,
     SCDType2ByColumnKind,
+    ViewKind,
 )
 from sqlmesh.core.node import IntervalUnit
 from sqlmesh.core.scheduler import (
@@ -1345,6 +1346,57 @@ def test_first_batch_checks_for_orphaned_physical_table(mocker: MockerFixture, m
     )
 
     assert mock_evaluator.evaluate.call_args.kwargs["target_table_exists"] is None
+
+
+@pytest.mark.fast
+def test_backfill_reconciles_selected_snapshots_without_batches(
+    mocker: MockerFixture, make_snapshot
+):
+    """A mixed plan must create a missing physical view before virtual-layer promotion."""
+    snapshot_a = make_snapshot(SqlModel(name="a", query=parse_one("SELECT 1 AS id")))
+    snapshot_b = make_snapshot(
+        SqlModel(name="b", kind=ViewKind(), query=parse_one("SELECT * FROM a")),
+        nodes={'"a"': snapshot_a.model},
+    )
+    snapshot_a.categorize_as(SnapshotChangeCategory.BREAKING)
+    snapshot_b.categorize_as(SnapshotChangeCategory.BREAKING)
+
+    call_order: t.List[str] = []
+    mock_evaluator = mocker.MagicMock()
+    mock_evaluator.evaluate.side_effect = lambda *args, **kwargs: call_order.append("evaluate_a")
+    mock_evaluator.create_snapshot.side_effect = lambda *args, **kwargs: call_order.append(
+        "create_b"
+    )
+
+    def get_snapshots_to_create(candidates, deployability_index):
+        assert set(candidates) == {snapshot_a, snapshot_b}
+        return [snapshot_b]
+
+    mock_evaluator.get_snapshots_to_create.side_effect = get_snapshots_to_create
+    mock_evaluator.concurrent_context.return_value.__enter__ = mocker.Mock(return_value=None)
+    mock_evaluator.concurrent_context.return_value.__exit__ = mocker.Mock(return_value=False)
+
+    scheduler = Scheduler(
+        snapshots=[snapshot_a, snapshot_b],
+        snapshot_evaluator=mock_evaluator,
+        state_sync=mocker.MagicMock(),
+        default_catalog=None,
+        max_workers=1,
+    )
+
+    interval = (to_timestamp("2023-01-01"), to_timestamp("2023-01-02"))
+    errors, skipped = scheduler.run_merged_intervals(
+        merged_intervals={snapshot_a: [interval]},
+        deployability_index=DeployabilityIndex.all_deployable(),
+        environment_naming_info=EnvironmentNamingInfo(),
+        selected_snapshot_ids={snapshot_a.snapshot_id, snapshot_b.snapshot_id},
+        audit_only=False,
+    )
+
+    assert errors == []
+    assert skipped == []
+    assert call_order == ["evaluate_a", "create_b"]
+    mock_evaluator.create_snapshot.assert_called_once()
 
 
 @pytest.mark.fast

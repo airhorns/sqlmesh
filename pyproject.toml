@@ -1,6 +1,6 @@
 [project]
 name = "sqlmesh"
-version = "0.236.1.dev19"
+version = "0.236.1.dev20"
 description = "Next-generation data transformation framework"
 readme = "README.md"
 authors = [{ name = "SQLMesh Contributors" }]
