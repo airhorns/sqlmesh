@@ -3121,6 +3121,13 @@ class EngineAdapter:
             return
 
         for identifier in expression.find_all(exp.Identifier):
+            # Query aliases inside a DDL statement are transient names and are
+            # not persisted as database identifiers. In particular, SQLGlot
+            # may synthesize aliases from literal values while normalizing a
+            # UNION used by INSERT ... SELECT. Enforcing the backend's object
+            # identifier limit on those aliases rejects otherwise valid DML.
+            if identifier.find_ancestor(exp.Alias, exp.TableAlias):
+                continue
             name = identifier.name
             name_length = len(name)
             if name_length > self.MAX_IDENTIFIER_LENGTH:

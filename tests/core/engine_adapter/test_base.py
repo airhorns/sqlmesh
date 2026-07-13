@@ -169,6 +169,19 @@ def test_create_schema(make_mocked_engine_adapter: t.Callable):
         adapter.create_schema("test_catalog.test_schema")
 
 
+def test_identifier_length_ignores_transient_query_aliases(
+    make_mocked_engine_adapter: t.Callable,
+):
+    adapter = make_mocked_engine_adapter(EngineAdapter)
+    adapter.MAX_IDENTIFIER_LENGTH = 8
+
+    adapter.execute(
+        parse_one("INSERT INTO target SELECT 'value' AS alias_longer_than_backend_limit")
+    )
+
+    adapter.cursor.execute.assert_called_once()
+
+
 def test_columns(make_mocked_engine_adapter: t.Callable):
     adapter = make_mocked_engine_adapter(EngineAdapter)
     adapter.cursor.fetchall.return_value = [
