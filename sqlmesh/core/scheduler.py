@@ -563,11 +563,13 @@ class Scheduler:
                             assert deployability_index  # mypy
                             node_start, node_end = node.interval
 
-                            # If batch_index > 0, then the target table must exist since the first batch would have created it
-                            target_table_exists = (
-                                snapshot.snapshot_id not in snapshots_to_create
-                                or node.batch_index > 0
-                            )
+                            # Always verify the target table on the first batch. A previous
+                            # failed plan may have left the physical table behind without an
+                            # interval in state. Treating it as missing causes the evaluator to
+                            # issue CREATE TABLE IF NOT EXISTS AS, which is a no-op against the
+                            # orphan and can leave stale or empty data in place indefinitely.
+                            # Later batches can rely on the first batch having created it.
+                            target_table_exists = True if node.batch_index > 0 else None
 
                             def _do_evaluate() -> t.List[AuditResult]:
                                 return self.evaluate(

@@ -1317,6 +1317,37 @@ def test_audit_only_dag_path_does_not_use_flat_pool(mocker: MockerFixture, make_
 
 
 @pytest.mark.fast
+def test_first_batch_checks_for_orphaned_physical_table(mocker: MockerFixture, make_snapshot):
+    """A retried plan must detect a physical table left by a failed first attempt."""
+    snapshot = make_snapshot(SqlModel(name="a", query=parse_one("SELECT 1 AS id")))
+    snapshot.categorize_as(SnapshotChangeCategory.BREAKING)
+
+    mock_evaluator = mocker.MagicMock()
+    mock_evaluator.evaluate.return_value = None
+    mock_evaluator.get_snapshots_to_create.return_value = [snapshot]
+    mock_evaluator.concurrent_context.return_value.__enter__ = mocker.Mock(return_value=None)
+    mock_evaluator.concurrent_context.return_value.__exit__ = mocker.Mock(return_value=False)
+
+    scheduler = Scheduler(
+        snapshots=[snapshot],
+        snapshot_evaluator=mock_evaluator,
+        state_sync=mocker.MagicMock(),
+        default_catalog=None,
+        max_workers=1,
+    )
+
+    interval = (to_timestamp("2023-01-01"), to_timestamp("2023-01-02"))
+    scheduler.run_merged_intervals(
+        merged_intervals={snapshot: [interval]},
+        deployability_index=DeployabilityIndex.all_deployable(),
+        environment_naming_info=EnvironmentNamingInfo(),
+        audit_only=False,
+    )
+
+    assert mock_evaluator.evaluate.call_args.kwargs["target_table_exists"] is None
+
+
+@pytest.mark.fast
 def test_audit_only_creates_missing_tables_before_auditing(mocker: MockerFixture, make_snapshot):
     call_order: t.List[str] = []
 
