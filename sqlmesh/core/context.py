@@ -2359,7 +2359,13 @@ class GenericContext(BaseContext, t.Generic[C]):
                     stored_environment.snapshots
                 ).values()
             }
-            deployability_index = DeployabilityIndex.create(snapshot_mapping.values())
+            deployability_index = (
+                DeployabilityIndex.all_deployable()
+                if stored_environment.name == c.PROD
+                else DeployabilityIndex.create(
+                    snapshot_mapping.values(), start=stored_environment.start_at
+                )
+            )
         else:
             snapshot_mapping = self.snapshots
             deployability_index = DeployabilityIndex.all_deployable()

@@ -3116,6 +3116,43 @@ def test_audit(mocker: MockerFixture):
             environment="prod",
         )
 
+    # A standalone audit of a partially backfilled development environment must
+    # resolve model dependencies to the dev physical tables, just like audits
+    # executed as part of the plan itself.
+    context.upsert_model(
+        load_sql_based_model(
+            parse(
+                """
+                MODEL (
+                  name dev_dummy,
+                  start '2020-01-01'
+                );
+
+                SELECT 1 AS c
+                """
+            )
+        )
+    )
+    context.plan(
+        "audit_dev",
+        start="2020-01-02",
+        no_prompts=True,
+        auto_apply=True,
+    )
+    dev_environment = context.state_reader.get_environment("audit_dev")
+    assert dev_environment is not None
+    dev_snapshots = context.state_reader.get_snapshots(dev_environment.snapshots)
+    dev_snapshot = next(s for s in dev_snapshots.values() if s.name == '"dev_dummy"')
+    evaluator_spy = mocker.patch.object(context.snapshot_evaluator, "audit", return_value=[])
+    assert context.audit(
+        models=["dev_dummy"],
+        start="2020-01-02",
+        end="2020-01-02",
+        environment="audit_dev",
+    )
+    deployability_index = evaluator_spy.call_args.kwargs["deployability_index"]
+    assert not deployability_index.is_deployable(dev_snapshot)
+
 
 def test_prompt_if_uncategorized_snapshot(mocker: MockerFixture, tmp_path: Path) -> None:
     init_example_project(tmp_path, engine_type="duckdb")
