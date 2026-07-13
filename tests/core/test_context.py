@@ -3039,6 +3039,15 @@ def test_audit(mocker: MockerFixture):
     context.plan(no_prompts=True, auto_apply=True)
 
     assert context.audit(models=["dummy", "dummy_b"], start="2020-01-01", end="2020-01-01") is False
+    assert (
+        context.audit(
+            models=["dummy", "dummy_b"],
+            start="2020-01-01",
+            end="2020-01-01",
+            respect_blocking=True,
+        )
+        is True
+    )
 
     context._concurrent_tasks = 2
     concurrent_spy = mocker.spy(sqlmesh.core.context, "concurrent_apply_to_values")
@@ -3152,6 +3161,14 @@ def test_audit(mocker: MockerFixture):
     )
     deployability_index = evaluator_spy.call_args.kwargs["deployability_index"]
     assert not deployability_index.is_deployable(dev_snapshot)
+    assert context.audit(
+        models=["dev_dummy"],
+        start="2020-01-02",
+        end="2020-01-02",
+        environment="audit_dev",
+        respect_blocking=True,
+    )
+    assert evaluator_spy.call_args.kwargs["respect_blocking"] is True
 
 
 def test_prompt_if_uncategorized_snapshot(mocker: MockerFixture, tmp_path: Path) -> None:

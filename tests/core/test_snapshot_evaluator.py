@@ -3420,6 +3420,22 @@ def test_audit_set_blocking_at_use_site(adapter_mock, make_snapshot):
     assert results[0].count == 1
     assert results[0].blocking
 
+    adapter_mock.SUPPORTS_CLONING = False
+    results = evaluator.audit(
+        snapshot,
+        snapshots={},
+        deployability_index=DeployabilityIndex.none_deployable(),
+    )
+    assert not results[0].blocking
+
+    results = evaluator.audit(
+        snapshot,
+        snapshots={},
+        deployability_index=DeployabilityIndex.none_deployable(),
+        respect_blocking=True,
+    )
+    assert results[0].blocking
+
 
 def test_create_post_statements_use_non_deployable_table(
     mocker: MockerFixture, adapter_mock, make_snapshot

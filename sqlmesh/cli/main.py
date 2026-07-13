@@ -829,6 +829,11 @@ def test(
 @opt.start_time
 @opt.end_time
 @opt.execution_time
+@click.option(
+    "--respect-blocking",
+    is_flag=True,
+    help="Fail only for blocking audits and preserve blocking behavior in development environments.",
+)
 @click.argument("environment", required=False)
 @click.pass_obj
 @error_handler
@@ -841,6 +846,7 @@ def audit(
     end: TimeLike,
     execution_time: t.Optional[TimeLike] = None,
     environment: t.Optional[str] = None,
+    respect_blocking: bool = False,
 ) -> None:
     """Run audits for the target model(s)."""
     if not obj.audit(
@@ -850,6 +856,7 @@ def audit(
         end=end,
         execution_time=execution_time,
         environment=environment,
+        respect_blocking=respect_blocking,
     ):
         exit(1)
 

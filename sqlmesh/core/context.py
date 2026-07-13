@@ -2332,6 +2332,7 @@ class GenericContext(BaseContext, t.Generic[C]):
         select_models: t.Optional[t.Collection[str]] = None,
         execution_time: t.Optional[TimeLike] = None,
         environment: t.Optional[str] = None,
+        respect_blocking: bool = False,
     ) -> bool:
         """Audit models.
 
@@ -2344,9 +2345,12 @@ class GenericContext(BaseContext, t.Generic[C]):
             execution_time: The date/time time reference to use for execution time. Defaults to now.
             environment: The environment whose promoted snapshots should be audited. If omitted,
                 snapshots are sourced from the currently loaded local project state.
+            respect_blocking: If true, only blocking audit failures make the command fail and
+                configured blocking behavior is preserved for development snapshots.
 
         Returns:
-            False if any of the audits failed, True otherwise.
+            False if any relevant audits failed, True otherwise. When ``respect_blocking`` is
+            true, non-blocking failures are reported as warnings and do not affect the result.
         """
 
         if environment is not None:
@@ -2403,11 +2407,13 @@ class GenericContext(BaseContext, t.Generic[C]):
                 deployability_index=deployability_index,
                 # The outer pool already occupies all configured worker slots.
                 audit_concurrent_tasks=1,
+                respect_blocking=respect_blocking,
             ),
             self.concurrent_tasks,
         )
 
         errors = []
+        blocking_errors = []
         skipped_count = 0
         for audit_results in audit_result_groups:
             for audit_result in audit_results:
@@ -2420,8 +2426,14 @@ class GenericContext(BaseContext, t.Generic[C]):
                     skipped_count += 1
                 elif audit_result.count:
                     errors.append(audit_result)
+                    if audit_result.blocking:
+                        blocking_errors.append(audit_result)
                     self.console.log_status_update(
-                        f"{audit_id} ❌ [red]FAIL [{audit_result.count}][/red]."
+                        (
+                            f"{audit_id} ❌ [red]FAIL [{audit_result.count}][/red]."
+                            if audit_result.blocking
+                            else f"{audit_id} ⚠️ [yellow]WARN [{audit_result.count}][/yellow]."
+                        )
                     )
                 else:
                     self.console.log_status_update(f"{audit_id} ✅ [green]PASS[/green].")
@@ -2441,7 +2453,7 @@ class GenericContext(BaseContext, t.Generic[C]):
                 )
 
         self.console.log_status_update("Done.")
-        return not errors
+        return not (blocking_errors if respect_blocking else errors)
 
     @python_api_analytics
     def rewrite(self, sql: str, dialect: str = "") -> exp.Expr:

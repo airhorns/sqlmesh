@@ -685,10 +685,10 @@ def test_standalone_audit(model: Model, assert_exp_eq):
         rendered_query, """SELECT * FROM "db"."test_model" AS "test_model" WHERE "col" IS NULL"""
     )
 
-    with pytest.raises(AuditConfigError) as ex:
-        StandaloneAudit(name="test_audit", query=parse_one("SELECT 1"), blocking=True)
-
-    assert "Standalone audits cannot be blocking: 'test_audit'." in str(ex.value)
+    blocking_audit = StandaloneAudit(
+        name="blocking_test_audit", query=parse_one("SELECT 1"), blocking=True
+    )
+    assert blocking_audit.blocking
 
 
 def test_render_definition():

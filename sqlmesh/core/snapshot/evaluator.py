@@ -575,6 +575,7 @@ class SnapshotEvaluator:
         deployability_index: t.Optional[DeployabilityIndex] = None,
         wap_id: t.Optional[str] = None,
         audit_concurrent_tasks: t.Optional[int] = None,
+        respect_blocking: bool = False,
         **kwargs: t.Any,
     ) -> t.List[AuditResult]:
         """Execute a snapshot's node's audit queries.
@@ -589,6 +590,8 @@ class SnapshotEvaluator:
             wap_id: The WAP ID if applicable, None otherwise.
             audit_concurrent_tasks: The number of concurrent audit queries to run for this snapshot.
                 Defaults to sequential execution unless explicitly overridden by the caller.
+            respect_blocking: Preserve configured blocking behavior even when auditing a partial
+                development snapshot on an engine that does not support cloning.
             kwargs: Additional kwargs to pass to the renderer.
         """
         deployability_index = deployability_index or DeployabilityIndex.all_deployable()
@@ -623,7 +626,11 @@ class SnapshotEvaluator:
         if audits_with_args:
             logger.info("Auditing snapshot %s", snapshot.snapshot_id)
 
-            if not deployability_index.is_deployable(snapshot) and not adapter.SUPPORTS_CLONING:
+            if (
+                not respect_blocking
+                and not deployability_index.is_deployable(snapshot)
+                and not adapter.SUPPORTS_CLONING
+            ):
                 # For dev preview tables that aren't based on clones of the production table, only a subset of the data is typically available
                 # However, users still expect audits to run anwyay. Some audits (such as row count) are practically guaranteed to fail
                 # when run on only a subset of data, so we switch all audits to non blocking and the user can decide if they still want to proceed
