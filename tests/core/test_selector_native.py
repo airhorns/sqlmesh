@@ -6,6 +6,7 @@ from unittest.mock import call
 
 import pytest
 from pytest_mock.plugin import MockerFixture
+from sqlglot import exp
 import subprocess
 
 from sqlmesh.core import dialect as d
@@ -13,7 +14,7 @@ from sqlmesh.core.audit import StandaloneAudit
 from sqlmesh.core.environment import Environment
 from sqlmesh.core.model import Model, SqlModel
 from sqlmesh.core.model.common import ParsableSql
-from sqlmesh.core.selector import NativeSelector
+from sqlmesh.core.selector import NativeSelector, parse
 from sqlmesh.core.snapshot import SnapshotChangeCategory
 from sqlmesh.utils import UniqueKeyDict
 from sqlmesh.utils.date import now_timestamp
@@ -567,6 +568,47 @@ def test_expand_model_selections(
 
     selector = NativeSelector(mocker.Mock(), models)
     assert selector.expand_model_selections(selections) == output
+
+
+def test_expand_model_selections_with_chained_intersections(mocker: MockerFixture):
+    models: UniqueKeyDict[str, Model] = UniqueKeyDict("models")
+    normal_lol_model = SqlModel(name="lol.f_lol_game_features", query=d.parse_one("SELECT 1 AS a"))
+    pregame_features = SqlModel(
+        name="lol.f_lol_game_pregame_features", query=d.parse_one("SELECT 2 AS a")
+    )
+    optional_capture = SqlModel(
+        name="lol.f_lol_game_realtime_features",
+        query=d.parse_one("SELECT 3 AS a"),
+        tags=["lol_optional_capture"],
+    )
+    non_lol_model = SqlModel(
+        name="valorant.f_valorant_game_features", query=d.parse_one("SELECT 4 AS a")
+    )
+
+    for model in (normal_lol_model, pregame_features, optional_capture, non_lol_model):
+        models[model.fqn] = model
+
+    selector = NativeSelector(mocker.Mock(), models)
+    expected_fqns = {normal_lol_model.fqn}
+    grouped_selector = "(lol.* & ^lol.f_lol_game_pregame_features) & ^tag:lol_optional_capture"
+    flat_selector = "lol.* & ^lol.f_lol_game_pregame_features & ^tag:lol_optional_capture"
+
+    assert selector.expand_model_selections([grouped_selector]) == expected_fqns
+    assert selector.expand_model_selections([flat_selector]) == expected_fqns
+
+
+def test_parse_chained_intersections():
+    assert parse("a & b & c") == exp.And(
+        this=exp.And(this=exp.Var(this="a"), expression=exp.Var(this="b")),
+        expression=exp.Var(this="c"),
+    )
+
+
+def test_parse_intersections_precede_unions():
+    assert parse("a & b | c & d") == exp.Or(
+        this=exp.And(this=exp.Var(this="a"), expression=exp.Var(this="b")),
+        expression=exp.And(this=exp.Var(this="c"), expression=exp.Var(this="d")),
+    )
 
 
 def test_model_selection_normalized(mocker: MockerFixture, make_snapshot):

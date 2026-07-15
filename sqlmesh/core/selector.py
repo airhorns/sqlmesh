@@ -503,7 +503,7 @@ def parse(selector: str, dialect: DialectType = None) -> exp.Expr:
     def _parse_conjunction() -> exp.Expr:
         this = _parse_unary()
 
-        if _match(TokenType.AMP):
+        while _match(TokenType.AMP):
             this = exp.And(this=this, expression=_parse_unary())
         if _match(TokenType.PIPE):
             this = exp.Or(this=this, expression=_parse_conjunction())
