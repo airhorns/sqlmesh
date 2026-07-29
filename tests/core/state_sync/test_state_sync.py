@@ -4220,3 +4220,43 @@ def test_state_version_is_too_old(
         match="The current state belongs to an old version of SQLMesh that is no longer supported. Please upgrade to 0.134.0 first before upgrading to.*",
     ):
         state_sync.migrate(skip_backup=True)
+
+
+def test_remove_intervals_with_nothing_to_remove(
+    state_sync: EngineAdapterStateSync, make_snapshot: t.Callable
+) -> None:
+    """An empty removal set must be a no-op, not an empty-DataFrame insert.
+
+    `remove_shared_versions=True` rebuilds the removal list from a query against
+    the intervals table, so a caller-supplied non-empty `snapshot_intervals` can
+    still reduce to nothing -- e.g. a restatement plan for snapshots that have no
+    shared-version rows yet. `_intervals_to_df([])` yields an empty (0, 0)
+    DataFrame, and `insert_append` rejects that with "Cannot construct source
+    query from an empty DataFrame", failing the plan AFTER every model batch has
+    already run.
+    """
+    snapshot = make_snapshot(
+        SqlModel(
+            name="unpushed",
+            cron="@daily",
+            query=parse_one("SELECT 1::INT AS a, '2022-01-01'::TEXT AS ds"),
+        ),
+        version="unpushed",
+    )
+
+    # Not pushed, so the shared-version lookup finds no rows and the removal set
+    # collapses to empty.
+    state_sync.remove_intervals(
+        [(snapshot, snapshot.inclusive_exclusive("2020-01-01", "2020-01-02"))],
+        remove_shared_versions=True,
+    )
+
+    assert (
+        state_sync.engine_adapter.fetchone(
+            "SELECT COUNT(*) FROM sqlmesh._intervals WHERE is_removed"
+        )[0]
+        == 0
+    )
+
+    # An explicitly empty call is a no-op too.
+    state_sync.remove_intervals([])
