@@ -258,28 +258,38 @@ class TestBasicOperations:
     def test_ctas_canonical_types_are_schema_diff_equivalent(
         self, ctx: TestContext, engine_adapter: StarRocksEngineAdapter
     ) -> None:
-        table = ctx.table("ctas_canonical_types")
-        table_sql = table.sql(dialect=ctx.dialect, identify=True)
+        ctas_table = ctx.table("ctas_canonical_types")
+        typed_table = ctx.table("typed_canonical_types")
+        ctas_table_sql = ctas_table.sql(dialect=ctx.dialect, identify=True)
 
         engine_adapter.execute(
-            f"CREATE TABLE {table_sql} AS "
+            f"CREATE TABLE {ctas_table_sql} AS "
             "SELECT CAST('mlb' AS VARCHAR) AS league_key, CAST(1.25 AS DOUBLE) AS metric"
         )
+        engine_adapter.create_table(
+            typed_table,
+            target_columns_to_types={
+                "league_key": exp.DataType.build("VARCHAR", dialect="starrocks"),
+                "metric": exp.DataType.build("DOUBLE", dialect="starrocks"),
+            },
+        )
 
-        actual = engine_adapter.columns(table)
-        assert actual["league_key"] in {
+        ctas_types = engine_adapter.columns(ctas_table)
+        typed_types = engine_adapter.columns(typed_table)
+        assert ctas_types["league_key"] in {
             exp.DataType.build("VARCHAR(65533)", dialect="starrocks"),
             exp.DataType.build("VARCHAR(1048576)", dialect="starrocks"),
         }
-        assert actual["metric"] == exp.DataType.build("DECIMAL(38, 9)", dialect="starrocks")
+        assert ctas_types["metric"] == exp.DataType.build("DECIMAL(38, 9)", dialect="starrocks")
+        assert typed_types == {
+            "league_key": exp.DataType.build("VARCHAR(65533)", dialect="starrocks"),
+            "metric": exp.DataType.build("DOUBLE", dialect="starrocks"),
+        }
         assert (
             engine_adapter.schema_differ.compare_columns(
-                table,
-                actual,
-                {
-                    "league_key": exp.DataType.build("VARCHAR", dialect="starrocks"),
-                    "metric": exp.DataType.build("DOUBLE", dialect="starrocks"),
-                },
+                ctas_table,
+                ctas_types,
+                typed_types,
             )
             == []
         )

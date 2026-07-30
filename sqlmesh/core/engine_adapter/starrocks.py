@@ -1711,6 +1711,9 @@ class StarRocksEngineAdapter(
             # DUPLICATE KEY table because it is the table's only key.
             exp.DataType.build("VARCHAR(1048576)", dialect=DIALECT): {
                 exp.DataType.build("VARCHAR", dialect=DIALECT),
+                # Typed CREATE uses TEXT, which StarRocks reports as VARCHAR(65533).
+                # Keep the existing wider CTAS column instead of narrowing it.
+                exp.DataType.build("VARCHAR(65533)", dialect=DIALECT),
             },
             # Older StarRocks releases report their maximum VARCHAR width as 65533.
             exp.DataType.build("VARCHAR(65533)", dialect=DIALECT): {

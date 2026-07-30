@@ -80,9 +80,11 @@ class TestSchemaOperations:
         assert operations == []
         for current_type, new_type in (
             ("VARCHAR(65533)", "VARCHAR"),
+            ("VARCHAR(1048576)", "VARCHAR(65533)"),
             ("BIGINT", "DOUBLE"),
             ("DECIMAL(38, 8)", "DOUBLE"),
             ("VARCHAR(100)", "VARCHAR"),
+            ("VARCHAR(65533)", "VARCHAR(1048576)"),
             ("DOUBLE", "DECIMAL(38, 9)"),
         ):
             result = adapter.schema_differ.compare_columns(
@@ -90,7 +92,10 @@ class TestSchemaOperations:
                 {"metric": exp.DataType.build(current_type, dialect="starrocks")},
                 {"metric": exp.DataType.build(new_type, dialect="starrocks")},
             )
-            if current_type == "VARCHAR(65533)":
+            if (current_type, new_type) in {
+                ("VARCHAR(65533)", "VARCHAR"),
+                ("VARCHAR(1048576)", "VARCHAR(65533)"),
+            }:
                 assert result == []
             else:
                 assert result
