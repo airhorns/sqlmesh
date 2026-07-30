@@ -1701,6 +1701,30 @@ class StarRocksEngineAdapter(
     SUPPORTS_REPLACE_TABLE = False
     """No REPLACE TABLE syntax; use DROP + CREATE instead"""
 
+    SCHEMA_DIFFER_KWARGS = {
+        "coerceable_types": {
+            # StarRocks canonicalizes these types when materializing a CTAS, even when
+            # the SELECT projection contains an explicit cast. SQLMesh's forward-only
+            # migration target is created from typed columns instead, so treating the
+            # canonical CTAS types as destructive changes would emit DROP/ADD pairs.
+            # Dropping the first VARCHAR column also fails for the default StarRocks
+            # DUPLICATE KEY table because it is the table's only key.
+            exp.DataType.build("VARCHAR(1048576)", dialect=DIALECT): {
+                exp.DataType.build("VARCHAR", dialect=DIALECT),
+                # Typed CREATE uses TEXT, which StarRocks reports as VARCHAR(65533).
+                # Keep the existing wider CTAS column instead of narrowing it.
+                exp.DataType.build("VARCHAR(65533)", dialect=DIALECT),
+            },
+            # Older StarRocks releases report their maximum VARCHAR width as 65533.
+            exp.DataType.build("VARCHAR(65533)", dialect=DIALECT): {
+                exp.DataType.build("VARCHAR", dialect=DIALECT),
+            },
+            exp.DataType.build("DECIMAL(38, 9)", dialect=DIALECT): {
+                exp.DataType.build("DOUBLE", dialect=DIALECT),
+            },
+        },
+    }
+
     SUPPORTS_CREATE_DROP_CATALOG = False
     """StarRocks supports DROPing external catalogs.
     TODO: whether it's external catalogs, or includes the internal catalog

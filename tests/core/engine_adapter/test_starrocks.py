@@ -59,6 +59,47 @@ def _columns(model: SqlModel) -> t.Dict[str, exp.DataType]:
 class TestSchemaOperations:
     """Tests for schema (database) operations."""
 
+    def test_ctas_canonical_types_do_not_require_destructive_migration(
+        self, make_mocked_engine_adapter: t.Callable[..., StarRocksEngineAdapter]
+    ) -> None:
+        """StarRocks CTAS canonicalization must not trigger DROP/ADD migrations."""
+        adapter = make_mocked_engine_adapter(StarRocksEngineAdapter)
+
+        operations = adapter.schema_differ.compare_columns(
+            "sqlmesh__baseball.snapshot",
+            {
+                "league_key": exp.DataType.build("VARCHAR(1048576)", dialect="starrocks"),
+                "metric": exp.DataType.build("DECIMAL(38, 9)", dialect="starrocks"),
+            },
+            {
+                "league_key": exp.DataType.build("VARCHAR", dialect="starrocks"),
+                "metric": exp.DataType.build("DOUBLE", dialect="starrocks"),
+            },
+        )
+
+        assert operations == []
+        for current_type, new_type in (
+            ("VARCHAR(65533)", "VARCHAR"),
+            ("VARCHAR(1048576)", "VARCHAR(65533)"),
+            ("BIGINT", "DOUBLE"),
+            ("DECIMAL(38, 8)", "DOUBLE"),
+            ("VARCHAR(100)", "VARCHAR"),
+            ("VARCHAR(65533)", "VARCHAR(1048576)"),
+            ("DOUBLE", "DECIMAL(38, 9)"),
+        ):
+            result = adapter.schema_differ.compare_columns(
+                "sqlmesh__baseball.snapshot",
+                {"metric": exp.DataType.build(current_type, dialect="starrocks")},
+                {"metric": exp.DataType.build(new_type, dialect="starrocks")},
+            )
+            if (current_type, new_type) in {
+                ("VARCHAR(65533)", "VARCHAR"),
+                ("VARCHAR(1048576)", "VARCHAR(65533)"),
+            }:
+                assert result == []
+            else:
+                assert result
+
     def test_create_schema(
         self, make_mocked_engine_adapter: t.Callable[..., StarRocksEngineAdapter]
     ):
