@@ -255,6 +255,35 @@ class TestBasicOperations:
         )
         assert dropped_result is None, "DROP DATABASE failed"
 
+    def test_ctas_canonical_types_are_schema_diff_equivalent(
+        self, ctx: TestContext, engine_adapter: StarRocksEngineAdapter
+    ) -> None:
+        table = ctx.table("ctas_canonical_types")
+        table_sql = table.sql(dialect=ctx.dialect, identify=True)
+
+        engine_adapter.execute(
+            f"CREATE TABLE {table_sql} AS "
+            "SELECT CAST('mlb' AS VARCHAR) AS league_key, CAST(1.25 AS DOUBLE) AS metric"
+        )
+
+        actual = engine_adapter.columns(table)
+        assert actual["league_key"] in {
+            exp.DataType.build("VARCHAR(65533)", dialect="starrocks"),
+            exp.DataType.build("VARCHAR(1048576)", dialect="starrocks"),
+        }
+        assert actual["metric"] == exp.DataType.build("DECIMAL(38, 9)", dialect="starrocks")
+        assert (
+            engine_adapter.schema_differ.compare_columns(
+                table,
+                actual,
+                {
+                    "league_key": exp.DataType.build("VARCHAR", dialect="starrocks"),
+                    "metric": exp.DataType.build("DOUBLE", dialect="starrocks"),
+                },
+            )
+            == []
+        )
+
     def test_create_drop_table(self, ctx: TestContext, engine_adapter: StarRocksEngineAdapter):
         """Test CREATE TABLE and DROP TABLE (TestContext version)."""
         table = ctx.table("sr_test_table")
