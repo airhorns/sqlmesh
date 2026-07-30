@@ -1359,6 +1359,7 @@ class GenericContext(BaseContext, t.Generic[C]):
         effective_from: t.Optional[TimeLike] = None,
         include_unmodified: t.Optional[bool] = None,
         select_models: t.Optional[t.Collection[str]] = None,
+        select_standalone_audits: t.Optional[t.Collection[str]] = None,
         backfill_models: t.Optional[t.Collection[str]] = None,
         categorizer_config: t.Optional[CategorizerConfig] = None,
         enable_preview: t.Optional[bool] = None,
@@ -1410,6 +1411,8 @@ class GenericContext(BaseContext, t.Generic[C]):
             effective_from: The effective date from which to apply forward-only changes on production.
             include_unmodified: Indicates whether to include unmodified models in the target development environment.
             select_models: A list of model selection strings to filter the models that should be included into this plan.
+            select_standalone_audits: Selection strings identifying standalone audits whose local changes
+                should be included. Unselected standalone audits are preserved from the target environment.
             backfill_models: A list of model selection strings to filter the models for which the data should be backfilled.
             enable_preview: Indicates whether to enable preview for forward-only models in development environments.
             no_diff: Hide text differences for changed models.
@@ -1442,6 +1445,7 @@ class GenericContext(BaseContext, t.Generic[C]):
             effective_from=effective_from,
             include_unmodified=include_unmodified,
             select_models=select_models,
+            select_standalone_audits=select_standalone_audits,
             backfill_models=backfill_models,
             categorizer_config=categorizer_config,
             enable_preview=enable_preview,
@@ -1497,6 +1501,7 @@ class GenericContext(BaseContext, t.Generic[C]):
         effective_from: t.Optional[TimeLike] = None,
         include_unmodified: t.Optional[bool] = None,
         select_models: t.Optional[t.Collection[str]] = None,
+        select_standalone_audits: t.Optional[t.Collection[str]] = None,
         backfill_models: t.Optional[t.Collection[str]] = None,
         categorizer_config: t.Optional[CategorizerConfig] = None,
         enable_preview: t.Optional[bool] = None,
@@ -1542,6 +1547,8 @@ class GenericContext(BaseContext, t.Generic[C]):
             effective_from: The effective date from which to apply forward-only changes on production.
             include_unmodified: Indicates whether to include unmodified models in the target development environment.
             select_models: A list of model selection strings to filter the models that should be included into this plan.
+            select_standalone_audits: Selection strings identifying standalone audits whose local changes
+                should be included. Unselected standalone audits are preserved from the target environment.
             backfill_models: A list of model selection strings to filter the models for which the data should be backfilled.
             enable_preview: Indicates whether to enable preview for forward-only models in development environments.
             preview_start: The start date for forward-only previews.
@@ -1578,6 +1585,11 @@ class GenericContext(BaseContext, t.Generic[C]):
             "effective_from": effective_from,
             "include_unmodified": include_unmodified,
             "select_models": list(select_models) if select_models is not None else None,
+            "select_standalone_audits": (
+                list(select_standalone_audits)
+                if select_standalone_audits is not None
+                else None
+            ),
             "backfill_models": list(backfill_models) if backfill_models is not None else None,
             "enable_preview": enable_preview,
             "preview_start": preview_start,
@@ -1689,7 +1701,20 @@ class GenericContext(BaseContext, t.Generic[C]):
         else:
             force_no_diff = not always_include_local_changes
 
-        snapshots = self._snapshots(models_override)
+        standalone_audits_override = (
+            self._select_standalone_audits_for_plan(
+                select_standalone_audits,
+                environment,
+                fallback_env_name=create_from or c.PROD,
+                ensure_finalized_snapshots=self.config.plan.use_finalized_state,
+            )
+            if select_standalone_audits is not None
+            else None
+        )
+        snapshots = self._snapshots(
+            models_override,
+            standalone_audits_override=standalone_audits_override,
+        )
         context_diff = self._context_diff(
             environment or c.PROD,
             snapshots=snapshots,
@@ -2982,9 +3007,20 @@ class GenericContext(BaseContext, t.Generic[C]):
         return self.engine_adapter
 
     def _snapshots(
-        self, models_override: t.Optional[UniqueKeyDict[str, Model]] = None
+        self,
+        models_override: t.Optional[UniqueKeyDict[str, Model]] = None,
+        standalone_audits_override: t.Optional[
+            UniqueKeyDict[str, StandaloneAudit]
+        ] = None,
     ) -> t.Dict[str, Snapshot]:
-        nodes = {**(models_override or self._models), **self._standalone_audits}
+        nodes = {
+            **(models_override or self._models),
+            **(
+                self._standalone_audits
+                if standalone_audits_override is None
+                else standalone_audits_override
+            ),
+        }
         snapshots = self._nodes_to_snapshots(nodes)
         stored_snapshots = self.state_reader.get_snapshots(snapshots.values())
 
@@ -3010,6 +3046,67 @@ class GenericContext(BaseContext, t.Generic[C]):
             snapshot.node = snapshots[snapshot.name].node
 
         return {name: stored_snapshots.get(s.snapshot_id, s) for name, s in snapshots.items()}
+
+    def _select_standalone_audits_for_plan(
+        self,
+        selections: t.Collection[str],
+        target_env_name: str,
+        *,
+        fallback_env_name: t.Optional[str] = None,
+        ensure_finalized_snapshots: bool = False,
+    ) -> UniqueKeyDict[str, StandaloneAudit]:
+        """Select local audit changes and preserve every unselected audit from state."""
+        target_env = self.state_reader.get_environment(
+            Environment.sanitize_name(target_env_name)
+        )
+        if target_env and target_env.expired:
+            target_env = None
+        if not target_env and fallback_env_name:
+            target_env = self.state_reader.get_environment(
+                Environment.sanitize_name(fallback_env_name)
+            )
+
+        env_nodes: t.Dict[str, Model | StandaloneAudit] = {}
+        if target_env:
+            snapshot_infos = (
+                target_env.snapshots
+                if not ensure_finalized_snapshots
+                else target_env.finalized_or_current_snapshots
+            )
+            env_nodes = {
+                snapshot.name: snapshot.node
+                for snapshot in self.state_reader.get_snapshots(snapshot_infos).values()
+                if snapshot.is_model or snapshot.is_audit
+            }
+
+        local_nodes: t.Dict[str, Model | StandaloneAudit] = {
+            **self._models,
+            **self._standalone_audits,
+        }
+        all_nodes = {**env_nodes, **local_nodes}
+        dag: DAG[str] = DAG()
+        selectable_nodes: UniqueKeyDict[str, Model] = UniqueKeyDict("nodes")
+        for fqn, node in all_nodes.items():
+            dag.add(fqn, node.depends_on)
+            # Selector behavior is defined on the common Node interface at runtime.
+            selectable_nodes[fqn] = t.cast(Model, node)
+
+        selector = self._new_selector(models=selectable_nodes, dag=dag)
+        selected_names = selector.expand_model_selections(selections, models=all_nodes)
+        audit_names = set(self._standalone_audits) | {
+            name for name, node in env_nodes.items() if isinstance(node, StandaloneAudit)
+        }
+        selected_audits = selected_names & audit_names
+
+        audits: UniqueKeyDict[str, StandaloneAudit] = UniqueKeyDict("standalone audits")
+        for name in audit_names:
+            if name in selected_audits and name in self._standalone_audits:
+                audits[name] = self._standalone_audits[name]
+            elif name not in selected_audits:
+                env_node = env_nodes.get(name)
+                if isinstance(env_node, StandaloneAudit):
+                    audits[name] = env_node
+        return audits
 
     def _context_diff(
         self,
