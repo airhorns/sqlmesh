@@ -23,7 +23,12 @@ import pytest
 from sqlglot import expressions as exp
 from sqlglot import parse_one
 from pytest_mock.plugin import MockerFixture
-from sqlmesh.core.engine_adapter.shared import DataObjectType
+from sqlmesh.core.engine_adapter.shared import (
+    DataObject,
+    DataObjectType,
+    InsertOverwriteStrategy,
+    SourceQuery,
+)
 from sqlmesh.utils.errors import SQLMeshError
 
 from tests.core.engine_adapter import to_sql_calls
@@ -31,6 +36,7 @@ from sqlmesh.core.engine_adapter.base import EngineAdapter
 from sqlmesh.core.engine_adapter.starrocks import StarRocksEngineAdapter
 from sqlmesh.core.engine_adapter.duckdb import DuckDBEngineAdapter
 from sqlmesh.core.dialect import parse
+from sqlmesh.utils.date import to_ds
 from sqlmesh.core.model import load_sql_based_model, SqlModel
 from sqlmesh.core.snapshot.definition import (
     DeployabilityIndex,
@@ -2540,3 +2546,149 @@ class TestExcludedTablesResolution:
             "excluded_refresh_tables"
             in StarRocksEngineAdapter.RESOLVE_TABLE_REFS_IN_PHYSICAL_PROPERTIES
         )
+
+
+# =============================================================================
+# Atomic whole-table replacement
+# =============================================================================
+class TestAtomicFullOverwrite:
+    """Whole-table replacement must be atomic; range replacement must not be.
+
+    StarRocks has no transactions and no `CREATE OR REPLACE TABLE`, so the default DELETE_INSERT
+    strategy rebuilds a table with `TRUNCATE` + `INSERT INTO`. A failure of the INSERT leaves the
+    table EMPTY rather than stale. `INSERT OVERWRITE` loads into temporary partitions and swaps
+    atomically, but always replaces the whole table -- so it is only safe when the whole table is
+    the target.
+    """
+
+    def test_replace_query_existing_table_is_atomic(
+        self,
+        make_mocked_engine_adapter: t.Callable[..., StarRocksEngineAdapter],
+        mocker: MockerFixture,
+    ) -> None:
+        """A FULL rebuild of an existing table must be a single atomic INSERT OVERWRITE."""
+        adapter = make_mocked_engine_adapter(StarRocksEngineAdapter)
+        mocker.patch.object(
+            adapter,
+            "_get_data_objects",
+            return_value=[DataObject(schema="db", name="test_table", type="table")],
+        )
+
+        adapter.replace_query(
+            "db.test_table",
+            parse_one("SELECT a, b FROM tbl"),
+            {"a": exp.DataType.build("INT"), "b": exp.DataType.build("INT")},
+        )
+
+        calls = to_sql_calls(adapter)
+        assert calls == [
+            "INSERT OVERWRITE `db`.`test_table` (`a`, `b`) SELECT `a`, `b` FROM `tbl`",
+        ]
+        # The failure mode this guards against: a TRUNCATE that is not rolled back.
+        assert all("TRUNCATE" not in sql for sql in calls)
+
+    def test_replace_query_new_table_still_uses_ctas(
+        self, make_mocked_engine_adapter: t.Callable[..., StarRocksEngineAdapter]
+    ) -> None:
+        """When the table does not exist yet, CTAS is still used (nothing to preserve)."""
+        adapter = make_mocked_engine_adapter(StarRocksEngineAdapter)
+
+        adapter.replace_query(
+            "db.test_table",
+            parse_one("SELECT a FROM tbl"),
+            {"a": exp.DataType.build("INT")},
+        )
+
+        calls = to_sql_calls(adapter)
+        assert len(calls) == 1
+        assert calls[0].startswith("CREATE TABLE IF NOT EXISTS `db`.`test_table`")
+        assert "INSERT OVERWRITE" not in calls[0]
+
+    def test_where_true_is_treated_as_whole_table(
+        self, make_mocked_engine_adapter: t.Callable[..., StarRocksEngineAdapter]
+    ) -> None:
+        """`WHERE TRUE` is the whole table, so it must take the atomic path too."""
+        adapter = make_mocked_engine_adapter(StarRocksEngineAdapter)
+
+        adapter._insert_overwrite_by_condition(
+            "db.test_table",
+            [SourceQuery(query_factory=lambda: parse_one("SELECT a FROM tbl"))],  # type: ignore
+            {"a": exp.DataType.build("INT")},
+            where=exp.true(),
+        )
+
+        calls = to_sql_calls(adapter)
+        assert all("TRUNCATE" not in sql for sql in calls)
+        assert len(calls) == 1
+        assert calls[0].startswith("INSERT OVERWRITE `db`.`test_table`")
+
+    def test_insert_overwrite_by_time_partition_still_uses_delete_insert(
+        self, make_mocked_engine_adapter: t.Callable[..., StarRocksEngineAdapter]
+    ) -> None:
+        """Range replacement must NOT become INSERT OVERWRITE.
+
+        StarRocks' INSERT OVERWRITE ignores the WHERE clause and replaces the entire table, so
+        promoting this path would silently delete every row outside the processed interval.
+        """
+        adapter = make_mocked_engine_adapter(StarRocksEngineAdapter)
+
+        adapter.insert_overwrite_by_time_partition(
+            "db.test_table",
+            parse_one("SELECT a, ds FROM tbl"),
+            start="2022-01-01",
+            end="2022-01-02",
+            time_column="ds",
+            time_formatter=lambda x, _: exp.Literal.string(to_ds(x)),
+            target_columns_to_types={
+                "a": exp.DataType.build("INT"),
+                "ds": exp.DataType.build("STRING"),
+            },
+        )
+
+        calls = to_sql_calls(adapter)
+        assert all("INSERT OVERWRITE" not in sql for sql in calls)
+        assert calls[0].startswith("DELETE FROM `db`.`test_table` WHERE")
+        assert calls[1].startswith("INSERT INTO `db`.`test_table`")
+
+    def test_explicit_strategy_override_is_respected(
+        self, make_mocked_engine_adapter: t.Callable[..., StarRocksEngineAdapter]
+    ) -> None:
+        """A caller that has already cleared the target keeps its requested strategy."""
+        adapter = make_mocked_engine_adapter(StarRocksEngineAdapter)
+
+        adapter._insert_overwrite_by_condition(
+            "db.test_table",
+            [SourceQuery(query_factory=lambda: parse_one("SELECT a FROM tbl"))],  # type: ignore
+            {"a": exp.DataType.build("INT")},
+            insert_overwrite_strategy_override=InsertOverwriteStrategy.DELETE_INSERT,
+        )
+
+        calls = to_sql_calls(adapter)
+        assert "TRUNCATE TABLE `db`.`test_table`" in calls
+        assert all("INSERT OVERWRITE" not in sql for sql in calls)
+
+    def test_multiple_source_queries_keep_delete_insert(
+        self,
+        make_mocked_engine_adapter: t.Callable[..., StarRocksEngineAdapter],
+        mocker: MockerFixture,
+    ) -> None:
+        """Batched sources cannot be made atomic, so they keep the existing behaviour."""
+        import pandas as pd
+
+        adapter = make_mocked_engine_adapter(StarRocksEngineAdapter)
+        adapter.DEFAULT_BATCH_SIZE = 1
+        mocker.patch.object(
+            adapter,
+            "_get_data_objects",
+            return_value=[DataObject(schema="db", name="test_table", type="table")],
+        )
+
+        adapter.replace_query(
+            "db.test_table",
+            pd.DataFrame({"a": [1, 2, 3]}),
+            {"a": exp.DataType.build("INT")},
+        )
+
+        calls = to_sql_calls(adapter)
+        assert any("TRUNCATE TABLE `db`.`test_table`" in sql for sql in calls)
+        assert all("INSERT OVERWRITE" not in sql for sql in calls)

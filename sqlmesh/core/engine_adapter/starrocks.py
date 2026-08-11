@@ -20,6 +20,7 @@ from sqlmesh.core.engine_adapter.shared import (
     CommentCreationView,
     DataObject,
     DataObjectType,
+    SourceQuery,
     set_catalog,
     to_schema,
 )
@@ -1662,14 +1663,15 @@ class StarRocksEngineAdapter(
 
     INSERT_OVERWRITE_STRATEGY = InsertOverwriteStrategy.DELETE_INSERT
     """
-    StarRocks does support INSERT OVERWRITE syntax (and dynamic overwrite from v3.5).
-    Use DELETE + INSERT pattern:
+    Default strategy for replacing a *range* of data:
     1. DELETE FROM table WHERE condition
     2. INSERT INTO table SELECT ...
 
-    Base class automatically handles this strategy without overriding insert methods.
-
-    TODO: later, we can add support for INSERT OVERWRITE, even use Primary Key for beter performance
+    StarRocks also supports INSERT OVERWRITE, which is atomic (load into temporary partitions, then
+    swap), but it always replaces the whole table rather than the range matched by `condition`, so
+    it cannot be the class-wide strategy: incremental kinds would lose every row outside the
+    interval being processed. `_insert_overwrite_by_condition` promotes to INSERT OVERWRITE for the
+    whole-table case only.
     """
 
     COMMENT_CREATION_TABLE = CommentCreationTable.IN_SCHEMA_DEF_NO_CTAS
@@ -1892,6 +1894,63 @@ class StarRocksEngineAdapter(
             f"PRIMARY KEY provides equivalent indexing for columns: {columns}"
         )
         return
+
+    def _insert_overwrite_by_condition(
+        self,
+        table_name: TableName,
+        source_queries: t.List[SourceQuery],
+        target_columns_to_types: t.Optional[t.Dict[str, exp.DataType]] = None,
+        where: t.Optional[exp.Condition] = None,
+        insert_overwrite_strategy_override: t.Optional[InsertOverwriteStrategy] = None,
+        **kwargs: t.Any,
+    ) -> None:
+        """Overwrite data in a table, atomically when the *whole* table is being replaced.
+
+        StarRocks has neither multi-statement transactions (`SUPPORTS_TRANSACTIONS = False`) nor
+        `CREATE OR REPLACE TABLE` (`SUPPORTS_REPLACE_TABLE = False`), so the default
+        `DELETE_INSERT` strategy replaces a table by running `TRUNCATE TABLE` and then an entirely
+        unprotected `INSERT INTO ... SELECT`. When that INSERT fails -- a lost tablet replica, a BE
+        restart, a `query_mem_limit` breach -- the table is left **empty** rather than stale, and
+        every reader sees zero rows until the next successful rebuild. Worse, an empty table is not
+        obviously broken: consumers that select from it get the full column set and no rows.
+
+        `INSERT OVERWRITE` avoids this. StarRocks executes it by loading into temporary partitions
+        and then atomically swapping them in, so a failed load leaves the previous data untouched.
+        It replaces the *entire* table, so it is only correct when the whole table is the target.
+
+        We therefore use it for exactly that case -- a single source query and no `where` clause,
+        which is what `replace_query()` issues for whole-table refreshes (`FULL` models, seeds,
+        materialized-view-backed models) -- and keep `DELETE_INSERT` for everything else.
+        `INCREMENTAL_BY_TIME_RANGE` and friends pass a `where` and must only replace that range;
+        setting `INSERT_OVERWRITE_STRATEGY = INSERT_OVERWRITE` wholesale instead of overriding here
+        would make the base implementation emit `INSERT OVERWRITE` for those models too and silently
+        destroy every row outside the current interval.
+
+        An explicit `insert_overwrite_strategy_override` from a caller always wins, so callers that
+        have already cleared the target range keep their intended semantics.
+
+        Note on `dynamic_overwrite`: from v3.4 StarRocks can be configured to make `INSERT OVERWRITE`
+        replace only the partitions present in the source data. That only affects partitioned tables;
+        for the single-implicit-partition tables SQLMesh creates it is still a full replace (verified
+        against StarRocks 4.1.1 with `dynamic_overwrite = true`). A partitioned `FULL` model running
+        with `dynamic_overwrite` enabled would retain partitions the new query no longer produces.
+        """
+        replaces_whole_table = (
+            insert_overwrite_strategy_override is None
+            and len(source_queries) == 1
+            and (where is None or where == exp.true())
+        )
+        if replaces_whole_table:
+            insert_overwrite_strategy_override = InsertOverwriteStrategy.INSERT_OVERWRITE
+
+        return super()._insert_overwrite_by_condition(
+            table_name,
+            source_queries,
+            target_columns_to_types,
+            where,
+            insert_overwrite_strategy_override=insert_overwrite_strategy_override,
+            **kwargs,
+        )
 
     def _create_table_like(
         self,
